@@ -658,6 +658,21 @@ def check_promise_not_to_overwrite(tmp):
             "Home.md": "# Mein eigenes Home\n",
             ".obsidian/app.json": "{}\n",
             "40-entscheidungen/2026-01-01-alt.md": "alt\n"}
+    # Diese vier Proben allein haben eine Luecke, und zwar ausgerechnet dort,
+    # wo der Schaden schon einmal entstanden ist: keine von ihnen liegt auf
+    # einem Pfad aus COMPANY_DROPS. Die Passage, die damals fremde Notizen
+    # mitloeschte, lief ueber genau diese Liste -- gebaut sie jemand wieder
+    # ein, bliebe diese Pruefung gruen. Auch die beiden Nachbarpruefungen
+    # faenden nichts: "drop list honoured" misst Abwesenheit und kann
+    # "nie kopiert" nicht von "kopiert und geloescht" unterscheiden, und
+    # "assembles twice" sieht einen unbedingten Loeschlauf als idempotent.
+    # Eine Zusage, die einem Menschen gedruckt wird, der gerade entscheidet
+    # ob er dem Ding traut, darf nicht davon abhaengen, dass der Code
+    # zufaellig richtig bleibt. Also bekommt jeder Eintrag der Liste eine
+    # eigene Probe.
+    for eintrag in load_company_drops():
+        rel = eintrag if eintrag.endswith(".md") else f"{eintrag}/meins.md"
+        mine[rel] = f"eigene Datei unter {eintrag} — darf nicht angefasst werden\n"
     for rel, text in mine.items():
         path = os.path.join(vault, *rel.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)
