@@ -726,25 +726,57 @@ def is_protected(rel):
     return low[0] == ".tools" or ".claude" in low or low[-1] in LOADED_BY_CLAUDE
 
 
+# What git reads from a repository folder and can turn into a program run:
+# the config (core.fsmonitor, core.hooksPath …), its per-worktree twin, the
+# pointers to another repository, and the hooks.
+GIT_RUN_FILES = {"config", "config.worktree", "commondir", "gitdir"}
+
+
+def looks_like_git_dir(path):
+    """A repository folder needs no `.git` name: git accepts any folder with
+    a HEAD and objects/refs (a "bare" repository), or a HEAD with a pointer to
+    another one — and a shell prompt that runs `git status` on entering that
+    folder runs whatever its config names. Notes never contain a file called
+    HEAD, so this is cheap and does not misfire."""
+    try:
+        if not stat.S_ISREG(os.lstat(path / "HEAD").st_mode):
+            return False
+    except OSError:
+        return False
+    return any(os.path.lexists(path / n) for n in ("objects", "refs", "commondir", "config"))
+
+
 def protected():
     """{vault-relative path: fingerprint} for every protected entry. Walks
     without following links; a linked folder is an entry itself, so swapping
     a plugin folder for a link to somewhere else shows up as a change."""
     out = {}
+    git_dirs = set()
     for dirpath, dirnames, filenames in os.walk(VAULT, followlinks=False):
         here = Path(dirpath)
         rel_dir = here.relative_to(VAULT).as_posix()
         rel_dir = "" if rel_dir == "." else rel_dir
-        if here.name.lower() == ".git":           # at any depth: only what git runs
+        if rel_dir and (here.name.lower() == ".git" or looks_like_git_dir(here)):
+            # at any depth, by name or by shape: the folder itself is an entry
+            # (a NEW repository is swept whole) and only what git runs inside
+            git_dirs.add(rel_dir)
+            out[rel_dir] = fingerprint(here)
             dirnames[:] = [d for d in dirnames if d.lower() == "hooks"]
-            filenames = [f for f in filenames if f.lower() == "config"]
+            for name in filenames:
+                if name.lower() in GIT_RUN_FILES:
+                    out[f"{rel_dir}/{name}"] = fingerprint(here / name)
+            filenames = []
+        elif any(rel_dir.startswith(g + "/") for g in git_dirs):     # inside hooks/
+            for name in filenames:
+                out[f"{rel_dir}/{name}"] = fingerprint(here / name)
+            filenames = []
         for name in list(dirnames):
             rel = f"{rel_dir}/{name}" if rel_dir else name
             if os.path.islink(here / name):
                 dirnames.remove(name)
-                if is_protected(rel) or is_protected(rel + "/x"):
+                if is_protected(rel) or is_protected(rel + "/x") or rel_dir in git_dirs:
                     out[rel] = fingerprint(here / name)
-            elif name.lower() in (".git", ".vscode", ".claude"):
+            elif name.lower() in (".vscode", ".claude"):
                 # the folder itself is an entry: a NEW one is swept whole on
                 # rollback, not left behind as an empty shell of a repository
                 out[rel] = fingerprint(here / name)
@@ -955,7 +987,8 @@ def vault_path(arg):
     except ValueError:
         raise SystemExit(f"refused: {arg} is outside the vault")
     if not rel.parts or any(s.lower() in PROTECTED_DIRS for s in rel.parts) \
-            or p.name.lower() in LOADED_BY_CLAUDE:
+            or p.name.lower() in LOADED_BY_CLAUDE or is_protected(rel.as_posix()) \
+            or any(looks_like_git_dir(q) for q in [p] + list(p.parents) if q != VAULT and VAULT in q.parents):
         raise SystemExit(f"refused: {arg} is a kit file")
     return p
 

@@ -98,7 +98,7 @@ def check_compiles():
     if os.path.exists(prog):
         targets.append(prog)
     targets += [os.path.join(ROOT, "hooks", n)
-                for n in ("capture_check.py", "session_queue.py")]
+                for n in ("capture_check.py", "session_queue.py", "project_context.py")]
     for extra in ("assemble.py",):                    # optional, checked if present
         p = os.path.join(ROOT, extra)
         if os.path.exists(p):
@@ -294,6 +294,19 @@ if mode == "edit-untracked":          # files git never had: a nested repo's con
     os.remove(pathlib.Path(".git", "hooks", "pre-push"))
     pathlib.Path(".git", "hooks", "pre-push").write_text("#!/bin/sh\necho original\n", encoding="utf-8")
     sys.exit(0)
+if mode == "bare-repo":               # a repository without the name: HEAD, objects, refs, a config that runs a program
+    b = pathlib.Path("30-knowledge", "x")
+    for d in ("objects", "refs/heads"):
+        (b / d).mkdir(parents=True, exist_ok=True)
+    (b / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (b / "config").write_text("[core]\n\tfsmonitor = planted\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "worktree-pointer":        # a HEAD and a pointer to another repository is enough for git too
+    b = pathlib.Path("10-projects", "y")
+    b.mkdir(parents=True, exist_ok=True)
+    (b / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (b / "commondir").write_text("../../.git\n", encoding="utf-8")
+    sys.exit(0)
 if mode == "vscode-task":             # an editor task set to run when the folder is opened
     pathlib.Path("10-projects", ".vscode").mkdir(parents=True, exist_ok=True)
     pathlib.Path("10-projects", ".vscode", "tasks.json").write_text('{"runOn": "folderOpen"}', encoding="utf-8")
@@ -385,6 +398,85 @@ if mode == "flag":
     print("API Error: Claude Code is unable to respond to this request - our safeguards flagged it")
 sys.exit(1)
 '''
+
+
+def check_project_context(tmp):
+    """The SessionStart hook speaks in a project's folder and nowhere else —
+    and what it says is that project's, current and in force."""
+    label = "project context hook"
+    vault = os.path.join(tmp, "ctxvault")
+    assemble(vault, "personal")
+    cfg = os.path.join(tmp, "ctxcfg")
+    os.makedirs(cfg)
+    with open(os.path.join(cfg, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        # written the way people write it: bold, in backticks, with a remark
+        fh.write(f"- **Brain vault:** `{vault}` — the line every brain skill reads\n")
+    work = os.path.join(tmp, "work")
+
+    def put(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(text)
+
+    put("10-projects/Acme-Shop.md", "---\ntype: project\naliases: [shop]\n---\n\n# Acme Shop\n\n"
+        "The online shop for Acme's spare parts.\n\n## Next steps\n- [ ] Fix the VAT rule\n- [ ] <template>\n\n"
+        "open → ask: which carrier for Austria?\n")
+    put("10-projects/Other.md", f"---\ntype: project\nfolders: [{os.path.join(work, 'client-x')}]\n---\n\n"
+        "# Other\n\nA client project in a folder with another name.\n")
+    put("10-projects/Gone.md", "---\ntype: project\nstatus: deprecated\n---\n\n# Gone\n\nDropped.\n")
+    put("40-decisions/2026-01-05-no-paypal.md", "---\ntype: decision\nstatus: stable\n---\n\n"
+        "# Decision: No PayPal at checkout\n\nFor [[Acme-Shop]]: card only.\n")
+    put("40-decisions/2026-01-01-paypal-first.md", "---\ntype: decision\nstatus: deprecated\n---\n\n"
+        "# Decision: PayPal first\n\nFor Acme-Shop.\n")
+    put("40-decisions/2026-01-03-other-thing.md", "---\ntype: decision\n---\n\n# Decision: Other only\n\nFor [[Other]].\n")
+    put("Deadlines.md", "\n- 2099-01-14 Acme-Shop launch\n- 2000-01-01 Acme-Shop kick-off\n"
+        "- 2099-02-01 Other delivery\n- Acme-Shop notes → [[2099-03-01-acme-shop-plan]]\n")
+    home = os.path.join(vault, "Home.md")
+    text = open(home, encoding="utf-8").read().replace(
+        "<!-- /block:open-questions -->", "- Acme-Shop: who signs the hosting contract?\n<!-- /block:open-questions -->")
+    with open(home, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    for d in ("acme-shop-api/.git", "acme-shop-api/src", "acme", "shop", "client-x/deep", "gone", "company"):
+        os.makedirs(os.path.join(work, *d.split("/")))
+    with open(os.path.join(work, "company", "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write("**Vault mode: company**\n")
+    os.makedirs(os.path.join(work, "company", "acme-shop"))
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
+
+    def ctx(cwd, source="startup", raw=None):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "hooks", "project_context.py")],
+                           input=raw if raw is not None else json.dumps({"cwd": cwd, "source": source}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
+        if r.returncode or r.stderr.strip():
+            return None
+        return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
+
+    brief = ctx(os.path.join(work, "acme-shop-api", "src"))
+    want = ["10-projects/Acme-Shop.md", "spare parts", "Fix the VAT rule", "2026-01-05-no-paypal.md",
+            "2099-01-14", "which carrier", "who signs the hosting contract"]
+    unwanted = ["<template>", "paypal-first", "2000-01-01", "2099-02-01", "2099-03-01", "Other only"]
+    if brief is None or [w for w in want if w not in brief] or [u for u in unwanted if u in brief]:
+        return bad(label, f"brief in the project's repo is wrong: missing {[w for w in want if w not in (brief or '')]}, "
+                          f"stray {[u for u in unwanted if u in (brief or '')]}")
+    if len(brief) > 2400:
+        return bad(label, f"brief is {len(brief)} characters — not a brief")
+    if "Other" not in (ctx(os.path.join(work, "client-x", "deep")) or ""):
+        return bad(label, "the folder named in a project's frontmatter got no brief")
+    if "Acme-Shop.md" not in (ctx(os.path.join(work, "shop")) or ""):
+        return bad(label, "a folder named like the project's alias got no brief")
+    quiet = {"a shorter folder name": os.path.join(work, "acme"),
+             "a dropped project": os.path.join(work, "gone"),
+             "inside the vault": os.path.join(vault, "10-projects"),
+             "inside another vault": os.path.join(work, "company", "acme-shop")}
+    loud = [k for k, cwd in quiet.items() if ctx(cwd) != ""]
+    if ctx(os.path.join(work, "acme-shop-api"), source="resume") != "":
+        loud.append("a resumed session")
+    if ctx(work, raw="not json") != "":
+        loud.append("broken input")
+    if loud:
+        return bad(label, f"spoke where it must be silent: {loud}")
+    ok(label)
 
 
 def check_autoreview(tmp):
@@ -609,6 +701,10 @@ def check_autoreview(tmp):
     import shutil as _sh
     _sh.rmtree(os.path.join(vault, "30-knowledge", "own"))
     _sh.rmtree(os.path.join(vault, "10-projects", ".vscode"))
+    for m, planted in (("bare-repo", "30-knowledge/x"), ("worktree-pointer", "10-projects/y")):
+        r = ar("run", "--now", mode=m)
+        if r.returncode != 3 or exists(planted):
+            return bad(label, f"a repository planted without the name .git went unnoticed ({m}, exit {r.returncode})")
     r = ar("run", "--now", mode="vscode-task")
     if r.returncode != 3 or exists("10-projects/.vscode/tasks.json"):
         return bad(label, f"an editor task planted in the vault went unnoticed (exit {r.returncode})")
@@ -721,6 +817,8 @@ def check_autoreview(tmp):
                            ("move", "30-knowledge/moved.md", ".mcp.json"),
                            ("move", "30-knowledge/moved.md", ".TOOLS/x.md"),
                            ("move", "30-knowledge/moved.md", "30-knowledge/.claude/commands/x.md"),
+                           ("move", "30-knowledge/moved.md", "10-projects/.vscode/tasks.json"),
+                           ("move", "30-knowledge/moved.md", "30-knowledge/sub/.git/config"),
                            ("delete", ".tools/hygiene.py"), ("delete", "CLAUDE.md"))
                if ar(*a).returncode == 0]
     if refused or not exists(".tools/hygiene.py") or exists(os.path.join("..", "outside.md")):
@@ -1371,6 +1469,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         check_harvest(tmp)
         check_hooks(tmp)
+        check_project_context(tmp)
         check_autoreview(tmp)
         check_exam(tmp)
         check_mode_guard(tmp)
