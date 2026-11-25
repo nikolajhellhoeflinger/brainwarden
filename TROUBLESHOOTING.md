@@ -212,14 +212,19 @@ each one the answer to a run that really failed:
   `.tools/set-aside-terms.txt`, and `set-aside --restore` brings them back.
 - **A note cannot take over the run.** Nobody watches it, and it reads
   whatever landed in your inbox — pasted web text included. So the model
-  gets only the vault's own three tools and a move/delete that cannot leave
-  the vault: no free shell, no git, no web, no MCP servers, no writes to
-  kit files, Git hooks or config, Obsidian plugins, `.mcp.json` or any
+  gets only the vault's own tools — each with the one command line the
+  review needs, search terms where it needs words — and a move/delete that
+  cannot leave the vault: no free shell, no git, no web, no MCP servers, no
+  writes to kit files, Git hooks or config (also of a repository nested in
+  a subfolder, whose config can name a program every `git status` there
+  runs), editor tasks (`.vscode/`), Obsidian plugins, `.mcp.json` or any
   `CLAUDE.md` (in any letter case — on macOS and Windows `claude.md` is the
   same file). And because a permission list is only as good as the CLI that
-  reads it, the runner also fingerprints all of those files before the run:
-  if any changed, the whole run is rolled back and `!Review failed.md`
-  tells you to look for a note with text aimed at the AI. Plugin settings
+  reads it, the runner also fingerprints all of those files before the run
+  and keeps a copy: if any changed, the whole run is rolled back, every one
+  of them written back byte for byte (also the ones git does not track),
+  and `!Review failed.md` tells you to look for a note with text aimed at
+  the AI. Plugin settings
   (`data.json`, which some plugins run commands from) are simply put back
   as they were. Read-only commands Claude Code always allows (like
   `git log`) stay possible — they change nothing. What no runner can
@@ -231,7 +236,9 @@ each one the answer to a run that really failed:
   `.tools/autoreview.json`: `"tools": ["mine.py"]`. Only plain names of
   files that really sit in `.tools/` count — no paths, no links, none of
   the kit's own scripts — and since that folder is protected like the
-  rest, no note can extend the list. `status` shows what was accepted.
+  rest, no note can extend the list. The model may call such a script with
+  any arguments, so list only scripts that stay inside the vault whatever
+  they are given. `status` shows what was accepted.
 - **`status`** says when it last ran and why not since. `uninstall`
   removes the schedule and nothing else.
 

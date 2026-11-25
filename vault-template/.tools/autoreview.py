@@ -108,14 +108,21 @@ DEFAULTS = {
 # future CLI version: protected files are hashed before the run and compared
 # after (see `protected`).
 TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
-VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "autoreview.py move ", "autoreview.py delete "]
+# Two kinds of rule. Tools that need words from the model (search terms, the
+# note to move) get `tool *` and check those words themselves. Tools that need
+# none get their ONE exact command line: `hygiene.py --root ~/other` would
+# report on a folder outside the vault, `harvest.py --candidates` would print
+# lines from every Claude session on the machine — the review needs neither.
+# hygiene.py and harvest.py also refuse those arguments on their own while
+# BRAINWARDEN_UNATTENDED is set (run_claude sets it), like exam.py does.
+VAULT_TOOLS = ["search.py ", "autoreview.py move ", "autoreview.py delete "]
+EXACT_TOOLS = ["hygiene.py", "harvest.py --queue", "exam.py --record"]
 OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py"}
-# exam.py exactly as `--record`, no wildcard: `--record add …` would write into
-# .tools/ and `--backend qmd` would start another program. exam.py refuses both
-# on its own as well while BRAINWARDEN_UNATTENDED is set (run_claude sets it).
+# (exam.py likewise: `--record add …` would write into .tools/, `--backend qmd`
+# would start another program.)
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
     f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS] + [
-    f"Bash({py} .tools/exam.py --record)" for py in ("python3", "python", "py -3")]
+    f"Bash({py} .tools/{t})" for py in ("python3", "python", "py -3") for t in EXACT_TOOLS]
 # A vault may add scripts of its own that its review runs (a search under
 # another name, a map it regenerates): `"tools": ["mine.py"]` in autoreview.json.
 # Safe to allow for the same reason the kit's are: they sit in `.tools/`, which
@@ -144,7 +151,7 @@ def allowed_tools(cfg):
     return ALLOWED_TOOLS + [f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3")
                             for t in extra_tools(cfg)]
 PROTECTED_DIRS = (".tools", ".git", ".obsidian", ".claude")
-DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Edit(**/.claude/**)"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
+DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Edit(**/.claude/**)", "Edit(**/.git/**)", "Edit(**/.vscode/**)"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
     f"Edit(**/{n})" for n in ("CLAUDE.md", "claude.md", "CLAUDE.local.md", ".mcp.json")] + [
     f"Bash({c} *)" for c in ("curl", "wget", "ssh", "scp", "nc", "git push", "sudo", "bash", "sh",
                              "zsh", "osascript", "launchctl", "crontab", "schtasks", "chmod")]
@@ -296,6 +303,12 @@ def git_dirty():
 def git_head():
     r = git("rev-parse", "HEAD")
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def dirty_beyond_logs():
+    r = git("status", "--porcelain")
+    return any(line[3:].strip('"') and not line[3:].strip('"').startswith(".tools/logs/")
+               for line in r.stdout.splitlines())
 
 
 def commit_all(message):
@@ -688,7 +701,12 @@ def is_protected(rel):
     code (Obsidian runs it), Claude settings at ANY depth (start Claude in a
     subfolder later and it loads them) and every file Claude Code reads as
     instructions, in any letter case (on macOS and Windows `claude.md` IS
-    `CLAUDE.md`). A plugin's data.json is not here: an open Obsidian rewrites
+    `CLAUDE.md`). Git's config and hooks at ANY depth too: a `.git` folder
+    planted in a subfolder is a repository of its own, and its config can
+    name a program (`core.fsmonitor`) that every `git status` there runs —
+    many shell prompts run one the moment you enter the folder. And editor
+    tasks (`.vscode/`), which can be set to run when the folder is opened.
+    A plugin's data.json is not here: an open Obsidian rewrites
     it all the time, so it is put back instead (restore_plugin_settings)."""
     parts = rel.split("/")
     low = [s.lower() for s in parts]
@@ -696,8 +714,11 @@ def is_protected(rel):
         return False
     if "/".join(low) in ANCHORS:
         return True
-    if low[0] == ".git":
-        return rel in (".git/config", ".git/hooks") or rel.startswith(".git/hooks/")
+    if ".git" in low:
+        tail = low[low.index(".git") + 1:]
+        return tail in ([], ["config"]) or tail[0] == "hooks"
+    if ".vscode" in low:
+        return True
     if low[0] == ".obsidian":
         if low[1:] == ["community-plugins.json"]:
             return True
@@ -714,15 +735,19 @@ def protected():
         here = Path(dirpath)
         rel_dir = here.relative_to(VAULT).as_posix()
         rel_dir = "" if rel_dir == "." else rel_dir
-        if rel_dir == ".git":
-            dirnames[:] = [d for d in dirnames if d == "hooks"]
-            filenames = [f for f in filenames if f == "config"]
+        if here.name.lower() == ".git":           # at any depth: only what git runs
+            dirnames[:] = [d for d in dirnames if d.lower() == "hooks"]
+            filenames = [f for f in filenames if f.lower() == "config"]
         for name in list(dirnames):
             rel = f"{rel_dir}/{name}" if rel_dir else name
             if os.path.islink(here / name):
                 dirnames.remove(name)
                 if is_protected(rel) or is_protected(rel + "/x"):
                     out[rel] = fingerprint(here / name)
+            elif name.lower() in (".git", ".vscode", ".claude"):
+                # the folder itself is an entry: a NEW one is swept whole on
+                # rollback, not left behind as an empty shell of a repository
+                out[rel] = fingerprint(here / name)
         for name in filenames:
             rel = f"{rel_dir}/{name}" if rel_dir else name
             if is_protected(rel):
@@ -823,6 +848,42 @@ def harmless(rel, before):
         return fh.read(64).decode("utf-8", "replace").strip() == "@index.md"
 
 
+def files_copy(before):
+    """Byte copies of every protected plain file, taken before the run. `git
+    reset` puts back only what git tracks — and a repository nested in a
+    subfolder, plugin code in a vault whose .gitignore leaves out .obsidian/,
+    an untracked editor task: git never had them. Detecting a change there
+    and then leaving it in place would be a rollback in name only."""
+    saved = {}
+    for rel, fp in before.items():
+        if fp.startswith(("link:", "special:", "unreadable:")):
+            continue
+        try:
+            fd = os.open(VAULT / rel, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+            with os.fdopen(fd, "rb") as fh:
+                saved[rel] = (fh.read(), stat.S_IMODE(os.fstat(fh.fileno()).st_mode))
+        except OSError:
+            pass
+    return saved
+
+
+def restore_files(saved_files, before):
+    """Every saved file that is no longer what it was, written back — with
+    its permissions: a git hook written back without its executable bit is
+    a hook git silently skips."""
+    now = protected()
+    for rel, (data, mode) in saved_files.items():
+        path = VAULT / rel
+        if now.get(rel) != before.get(rel):
+            safe_write(path, data)
+        try:
+            if not os.path.islink(path) and stat.S_IMODE(os.lstat(path).st_mode) != mode:
+                os.chmod(path, mode)
+        except OSError:
+            pass
+
+
 def hooks_copy():
     """Byte copies of what `git reset` cannot restore: hooks and .git/config
     are not part of the history. Key "" holds the config. Links are not
@@ -860,7 +921,7 @@ def _restore_hooks(saved_hooks):
             safe_write(hooks / name, data)
 
 
-def roll_back(base, before, saved_hooks, saved_plugins):
+def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None):
     """Undo the whole run: new things in protected places removed (links
     first, before anything is written), git config and hooks restored byte for
     byte, tracked files back to the starting point, plugin settings put back.
@@ -872,6 +933,7 @@ def roll_back(base, before, saved_hooks, saved_plugins):
              lambda: git("reset", "-q", "--hard", base),
              lambda: sweep(before),
              lambda: _restore_hooks(saved_hooks),
+             lambda: restore_files(saved_files or {}, before),
              lambda: restore_plugin_settings(saved_plugins)]
     for step in steps:
         try:
@@ -1064,11 +1126,12 @@ def _run_locked(cfg, cmd, days, idle):
     base = git_head()
     # Step 1: set aside what would abort the run (lesson 1)
     excluded = set_aside()
-    if git_dirty():
+    if dirty_beyond_logs():     # the log line alone is no reason to claim notes moved
         commit_all(f"Weekly run {stamp}: notes set aside before it started")
     # Step 2: the run, and at most one retry for a plain failure
     prompt = build_prompt(excluded, extra_tools(cfg))
     before, saved_hooks, saved_plugins = protected(), hooks_copy(), plugin_settings()
+    saved_files = files_copy(before)
     offset = log_offset()
     say("review starts")
     status, took = run_claude(cmd, prompt, cfg)
@@ -1085,7 +1148,7 @@ def _run_locked(cfg, cmd, days, idle):
         say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
         changed = [f"(the check itself failed: {e.__class__.__name__})"]
     if changed:
-        return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed)
+        return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files)
     flagged = flagged_since(offset)
     slept = False
     if status and not flagged:
@@ -1109,7 +1172,8 @@ def _run_locked(cfg, cmd, days, idle):
     if git_dirty():
         # Only a success says "Review": search.py --stats counts review days
         # from these messages, and a failed run is not a review that happened.
-        commit_all(f"Review {stamp}: follow-up (run log)" if status == 0
+        # The model runs no git, so this one commit IS the review's work.
+        commit_all(f"Review {stamp} (unattended)" if status == 0
                    else f"Weekly run {stamp}: partial work saved after an abort")
     LAST_RUN.write_text(json.dumps({"date": stamp, "base": base, "head": git_head(),
                                     "status": status, "undone": False}, indent=1) + "\n",
@@ -1139,11 +1203,11 @@ def _run_locked(cfg, cmd, days, idle):
     return status
 
 
-def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed):
+def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files=None):
     """The run changed files it can never legitimately touch. Nothing it did
     can be trusted, so all of it goes — and the person is told where to look."""
     say("PROTECTED FILES CHANGED — rolling the whole run back: " + ", ".join(changed[:10]))
-    roll_back(base, before, saved_hooks, saved_plugins)
+    roll_back(base, before, saved_hooks, saved_plugins, saved_files)
     write_fail_note(
         "The unattended review changed files it must never touch (kit tools, git hooks, Obsidian "
         f"plugins, Claude settings or a CLAUDE.md): {', '.join(changed[:10])}. That is what a note "

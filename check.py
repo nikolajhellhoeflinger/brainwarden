@@ -283,6 +283,21 @@ if mode == "inject":                  # what a note smuggling instructions could
     pathlib.Path(".obsidian", "plugins", "evil", "main.js").write_text("planted()", encoding="utf-8")
     pathlib.Path("30-knowledge", "tools.md").write_text("rewritten by the run\n", encoding="utf-8")
     sys.exit(0)
+if mode == "nested-git":              # a repository of its own in a subfolder: its config runs on `git status`
+    pathlib.Path("30-knowledge", "sub", ".git").mkdir(parents=True, exist_ok=True)
+    pathlib.Path("30-knowledge", "sub", ".git", "config").write_text("[core]\n\tfsmonitor = planted\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "edit-untracked":          # files git never had: a nested repo's config, an ignored editor folder, a hook
+    with open(pathlib.Path("30-knowledge", "own", ".git", "config"), "a", encoding="utf-8") as fh:
+        fh.write("\tfsmonitor = planted\n")
+    pathlib.Path("10-projects", ".vscode", "settings.json").write_text('{"planted": 1}', encoding="utf-8")
+    os.remove(pathlib.Path(".git", "hooks", "pre-push"))
+    pathlib.Path(".git", "hooks", "pre-push").write_text("#!/bin/sh\necho original\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "vscode-task":             # an editor task set to run when the folder is opened
+    pathlib.Path("10-projects", ".vscode").mkdir(parents=True, exist_ok=True)
+    pathlib.Path("10-projects", ".vscode", "tasks.json").write_text('{"runOn": "folderOpen"}', encoding="utf-8")
+    sys.exit(0)
 if mode == "nested-claude":           # settings for whoever starts Claude in a subfolder later
     pathlib.Path("10-projects", "x", ".claude").mkdir(parents=True, exist_ok=True)
     pathlib.Path("10-projects", "x", ".claude", "settings.json").write_text('{"hooks": "planted"}', encoding="utf-8")
@@ -451,6 +466,9 @@ def check_autoreview(tmp):
         return bad(label, "success run did not commit the starting point or did no work")
     if not exists(".tools/logs/last-success") or sh("git", "status", "--porcelain").stdout.strip():
         return bad(label, "success run left no stamp or uncommitted changes")
+    # the history says what happened: nothing was set aside, and the run's work is "the review"
+    if "notes set aside" in log() or "(unattended)" not in log().splitlines()[0]:
+        return bad(label, f"the commits of a plain run misname it: {log().splitlines()[:3]}")
     told = open(prompt, encoding="utf-8").read()
     if "Autonomous mode" not in told or "30-knowledge/tools.md" not in told:
         return bad(label, "the run was not told autonomous mode / the note to leave out")
@@ -496,10 +514,22 @@ def check_autoreview(tmp):
     if not allowed or wide or "--strict-mcp-config" not in argv or mode_ != "default" \
             or not set(offered) <= {"Read", "Edit", "Write", "Glob", "Grep", "Bash", "Skill"}:
         return bad(label, f"the unattended model gets too much: {wide or (mode_, offered)}")
-    exam_rules = [a for a in allowed if "exam.py" in a]
-    if not exam_rules or any(not a.endswith("exam.py --record)") for a in exam_rules) \
-            or open(prompt + ".env", encoding="utf-8").read() != "1":
-        return bad(label, f"exam.py is not limited to an exact --record, or the run is not marked unattended: {exam_rules}")
+    for name, exact in (("exam.py", "exam.py --record)"), ("hygiene.py", "hygiene.py)"),
+                        ("harvest.py", "harvest.py --queue)")):
+        rules = [a for a in allowed if name in a]
+        if not rules or any(not a.endswith(exact) for a in rules):
+            return bad(label, f"{name} is not limited to its one command line: {rules}")
+    if open(prompt + ".env", encoding="utf-8").read() != "1":
+        return bad(label, "the run is not marked unattended")
+    # and the tools refuse the rest by themselves, whatever a rule lets through
+    unattended = dict(env, BRAINWARDEN_UNATTENDED="1")
+    for argv_, want in ((["hygiene.py", "--root", tmp], 2), (["hygiene.py", tmp], 2), (["hygiene.py"], 0),
+                        (["harvest.py", "--candidates"], 2), (["harvest.py"], 2), (["harvest.py", "--queue"], 0)):
+        rc = subprocess.run([sys.executable, os.path.join(vault, ".tools", argv_[0]), *argv_[1:]], cwd=vault,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            env=unattended).returncode
+        if (rc == 2) != (want == 2):
+            return bad(label, f"unattended `{' '.join(argv_)}` exited {rc}")
 
     # 5b2. a vault's own scripts: allowed by plain name from the config, nothing else
     write(".tools/mine.py", "print('mine')\n")
@@ -559,6 +589,29 @@ def check_autoreview(tmp):
     if r.returncode != 3 or "planted-hooks" in read(".git/config"):
         return bad(label, f"a run that only redirected git hooks was not caught (exit {r.returncode})")
 
+    r = ar("run", "--now", mode="nested-git")
+    if r.returncode != 3 or exists("30-knowledge/sub/.git"):
+        return bad(label, f"a .git folder planted below the vault root went unnoticed (exit {r.returncode})")
+    # changed, not new: files git never tracked come back byte for byte, hooks executable
+    write("30-knowledge/own/.git/config", "[core]\n\tbare = false\n")
+    write("10-projects/.vscode/settings.json", "{}")
+    with open(os.path.join(vault, ".gitignore"), "a", encoding="utf-8") as fh:
+        fh.write("\n.vscode/\n")
+    os.chmod(os.path.join(vault, ".git", "hooks", "pre-push"), 0o755)
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "an editor folder, ignored")
+    r = ar("run", "--now", mode="edit-untracked")
+    executable = os.name == "nt" or os.stat(os.path.join(vault, ".git", "hooks", "pre-push")).st_mode & 0o100
+    if r.returncode != 3 or "planted" in read("30-knowledge/own/.git/config") \
+            or read("10-projects/.vscode/settings.json") != "{}" or not executable:
+        return bad(label, f"a rollback left changes in files git does not track (exit {r.returncode}, "
+                          f"hook executable: {bool(executable)})")
+    import shutil as _sh
+    _sh.rmtree(os.path.join(vault, "30-knowledge", "own"))
+    _sh.rmtree(os.path.join(vault, "10-projects", ".vscode"))
+    r = ar("run", "--now", mode="vscode-task")
+    if r.returncode != 3 or exists("10-projects/.vscode/tasks.json"):
+        return bad(label, f"an editor task planted in the vault went unnoticed (exit {r.returncode})")
     r = ar("run", "--now", mode="nested-claude")
     if r.returncode != 3 or exists("10-projects/x/.claude/settings.json"):
         return bad(label, f"a .claude folder below the vault root went unnoticed (exit {r.returncode})")

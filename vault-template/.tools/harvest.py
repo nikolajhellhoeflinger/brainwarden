@@ -396,6 +396,12 @@ def show_queue(root_cfg):
     return 0
 
 def main():
+    if os.environ.get("BRAINWARDEN_UNATTENDED") and sys.argv[1:] != ["--queue"]:
+        # Unattended, only the queue: when and where sessions ended. The
+        # inventory and the candidates read the transcripts of every Claude
+        # session on this machine — that needs the person in the chat.
+        print("refused while unattended: only `harvest.py --queue` (transcripts in a normal chat)")
+        return 2
     ap = argparse.ArgumentParser(add_help=True, description=__doc__.split("\n")[0])
     ap.add_argument("--queue", action="store_true",
                     help="show the session queue (needs the SessionEnd hook)")

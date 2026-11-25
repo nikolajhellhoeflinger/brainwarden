@@ -554,6 +554,11 @@ def vault_mode(root):
 
 def main():
     argv = sys.argv[1:]
+    if os.environ.get("BRAINWARDEN_UNATTENDED") and any(a != "--max" and not a.isdigit() for a in argv):
+        # The unattended review checks THIS vault and nothing else: a path
+        # would make the report a window onto a folder outside it.
+        print("refused while unattended: only `hygiene.py` on this vault (other folders in a normal chat)")
+        return 2
     limit, root = 10, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # A bare path is accepted as the vault. It used to be swallowed in
     # silence: `hygiene.py /some/vault` then scanned the tool's OWN vault and
