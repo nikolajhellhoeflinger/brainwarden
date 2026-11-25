@@ -1244,7 +1244,13 @@ def plan_install(platform, python, script):
         plist = home / "Library" / "LaunchAgents" / f"{label}.plist"
         cfg = load_config()
         cmd = claude_cmd(cfg) or ["claude"]
-        path = os.pathsep.join(dict.fromkeys([str(Path(cmd[0]).parent), str(home / ".local" / "bin"),
+        # node too: Claude Code runs the person's hooks in this run as well, they
+        # are often `node …`, and nvm puts node outside every standard path —
+        # without it each hook fails with "node: command not found" in the log
+        # (after a node upgrade under nvm, run `install` once more).
+        node = shutil.which("node")
+        path = os.pathsep.join(dict.fromkeys([str(Path(cmd[0]).parent)] + ([str(Path(node).parent)] if node else [])
+                                             + [str(home / ".local" / "bin"),
                                               "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
                                               "/usr/sbin", "/sbin"]))
         body = f"""<?xml version="1.0" encoding="UTF-8"?>
