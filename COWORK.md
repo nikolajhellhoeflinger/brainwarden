@@ -112,6 +112,64 @@ everyone else Cowork.
    Claude Code. Nothing is missing for the readers: looking something up
    needs the project instruction in step 3 and nothing else.
 
+## Claude Desktop chat and other apps (MCP)
+
+Cowork and the Code tab of Claude Desktop open the folder themselves. The
+Chat tab, and other apps that speak MCP, need a bridge: an MCP server that
+hands them the vault's files. The kit recommends
+[MCPVault](https://github.com/bitbonsai/mcpvault) (MIT) **read-only**. It
+reads the folder directly (Obsidian need not be running), opens no network
+port, needs no API key and refuses `.git/`, `.obsidian/` and other
+dot-folders. Checked against a fresh vault with version 0.18.4: with
+`--read-only` it offers eleven reading tools and nothing else, and a write
+sent anyway is refused by the server itself.
+
+1. Install Node.js (LTS, 22.12 or later) from nodejs.org.
+2. Claude Desktop → Settings → Developer → Edit Config. Add, with your
+   vault's absolute path (Windows: `"C:\\Users\\YOU\\Brain"`, double
+   backslashes):
+
+   ```json
+   {
+     "mcpServers": {
+       "brain": {
+         "command": "npx",
+         "args": ["-y", "@bitbonsai/mcpvault@0.18.4", "/Users/YOU/Brain", "--read-only"]
+       }
+     }
+   }
+   ```
+3. Quit Claude Desktop completely and start it again; `brain` appears
+   under **+ → Connectors**. Does not start? On Windows use `"command":
+   "cmd"` with `"/c", "npx",` in front of the arguments; with Node from
+   Homebrew or nvm, put the full path of `npx` into `"command"`.
+4. **Give it the rules.** An MCP app does not read `CLAUDE.md` by itself.
+   Make a Claude Desktop Project for the vault and paste the instructions
+   from step 3 above, with one line added: *"You reach the vault only
+   through the read-only "brain" connector. Read index.md and CLAUDE.md
+   with it first. You cannot change the vault: when something should be
+   added or corrected, write it out for me to file with Claude Code."*
+   In a personal brain, leave out the line about `status: stable` and
+   `verified:` — that is the company vault's rule.
+
+**Why read-only, and why it stays that way:** the vault's rules — the
+inbox, append-only decisions, the review that files and reports — live in
+Claude Code's skills and hooks, and an MCP app loads none of them. Without
+the flag the server can overwrite, move and permanently delete notes, and a
+note whose text reads like an instruction would have tools to act on.
+Writing stays in Claude Code. The version is pinned so the app does not
+fetch a new release on every start; raise it on purpose, after reading the
+changelog. The alternative, if you prefer the MCP project's own code: the
+official filesystem server (`@modelcontextprotocol/server-filesystem
+--read-only <vault>`, Node 24+) — it knows nothing about Obsidian and shows
+`.git/` and `.obsidian/` to the model.
+
+**For writing Obsidian's own formats** in Claude Code (wikilinks,
+properties, callouts, Bases, Canvas), install Obsidian's official skills
+next to these: `/plugin marketplace add obsidianmd/obsidian-skills`, then
+`/plugin install obsidian@obsidian-skills` (MIT). Brainwarden decides what
+goes where; they make sure it is written the way Obsidian reads it.
+
 ## Which one for whom
 
 - **Cowork** — everyone who reads: sales, marketing, accounting, branches.
