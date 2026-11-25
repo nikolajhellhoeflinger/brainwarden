@@ -941,6 +941,136 @@ def check_people(tmp):
     ok(label)
 
 
+def linkedin_export(root, today):
+    """A synthetic LinkedIn export with every documented quirk."""
+    D = __import__("datetime")
+    day = lambda n: (today + D.timedelta(days=n))
+    os.makedirs(root, exist_ok=True)
+    me = "https://www.linkedin.com/in/niko-me"
+    url = lambda s: f"https://www.linkedin.com/in/{s}"
+    with open(os.path.join(root, "Connections.csv"), "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write('Notes:\n"When exporting your connection data, some email addresses are missing."\n\n'
+                 "First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
+                 f"Jane,Doe,{url('jane-doe-1')},,,,12 Mar 2017\n"
+                 f"Old,Colleague,{url('old-colleague')},,Steuerkanzlei Huber,Steuerberater,05 Jan 2015\n"
+                 f"Recent,Pal,{url('recent-pal')},,,,01 Feb 2025\n"
+                 f"Hans,MÃ¼ller,{url('hans-mueller')},,,,01 Feb 2020\n"
+                 "Gone,,,,,,01 Jan 2019\n"
+                 f"Recruiting,Agent,{url('recruiter')},,,,01 Jan 2024\n"
+                 f"Fresh,Expert,{url('fresh-expert')},,,,01 Jan 2024\n")
+    head = ("CONVERSATION ID,CONVERSATION TITLE,FROM,SENDER PROFILE URL,TO,RECIPIENT PROFILE URLS,DATE,"
+            "SUBJECT,CONTENT,FOLDER,ATTACHMENTS,IS MESSAGE DRAFT\n")
+    stamp = lambda d: d.strftime("%Y-%m-%d") + " 10:00:00 UTC"
+    rows = [("c1", "Niko", me, "Jane", url("jane-doe-1"), day(-30)), ("c1", "Jane", url("jane-doe-1"), "Niko", me, day(-20)),
+            ("c2", "Niko", me, "Old", url("old-colleague"), D.date(2019, 4, 1)),
+            ("c2", "Old", url("old-colleague"), "Niko", me, D.date(2019, 4, 3)),
+            ("c3", "Recruiting", url("recruiter"), "Niko", me, day(-100)),
+            ("c4", "Niko", me, "Pal; Hans", url("recent-pal") + "; " + url("hans-mueller"), day(-50)),
+            ("c4", "Pal", url("recent-pal"), "Niko; Hans", me + "; " + url("hans-mueller"), day(-49)),
+            ("c5", "Sponsored", "", "Niko", me, day(-10)),
+            ("c7", "Niko", me, "Hans", url("hans-mueller"), D.date(2021, 6, 1)),
+            ("c8", "Niko", me, "Fresh", url("fresh-expert"), day(-40)),
+            ("c8", "Fresh", url("fresh-expert"), "Niko", me, day(-39))]
+    with open(os.path.join(root, "messages.csv"), "w", encoding="utf-8-sig", newline="") as fh:
+        fh.write(head)
+        for i, (cid, frm, sender, to, rcpt, when) in enumerate(rows):
+            fh.write(f'{cid},TITLEMARK,{frm},{sender},{to},"{rcpt}",{stamp(when)},SUBJECTMARK,'
+                     f'"<p>SECRETMARK-{i}</p>\nsecond line",INBOX,,No\n')
+        fh.write(f'c6,TITLEMARK,Niko,{me},Hans,"{url("hans-mueller")}",{stamp(day(-1))},SUBJECTMARK,'
+                 f'"SECRETMARK-draft",DRAFT,,Yes\n')
+    with open(os.path.join(root, "Endorsement_Given_Info.csv"), "w", encoding="utf-8", newline="") as fh:
+        fh.write("Endorsement Date,Skill Name,Endorsee First Name,Endorsee Last Name,Endorsee Public Url,Endorsement Status\n"
+                 f"2019/04/02 10:00:00 UTC,Tax Law,Old,Colleague,{url('old-colleague')},ACCEPTED\n"
+                 f"2025/02/02 10:00:00 UTC,Tax Law,Fresh,Expert,{url('fresh-expert')},ACCEPTED\n")
+    with open(os.path.join(root, "Recommendations_Given.csv"), "w", encoding="utf-8", newline="") as fh:
+        fh.write("First Name,Last Name,Company,Job Title,Text,Creation Date,Status\n"
+                 'Jane,Doe,X,Y,"Jane untangled our VAT registration in a week.","03/04/21, 10:00 AM",VISIBLE\n')
+
+
+def check_linkedin(tmp):
+    """The LinkedIn export: read in place, names withheld until asked, message
+    text never printed, two-way ties only, dormant ties by topic — and refused
+    inside the vault, in a company vault and unattended."""
+    label = "LinkedIn: ties, vouching, dormant ties — never message text"
+    D = __import__("datetime")
+    today = D.date.today()
+    vault = os.path.join(tmp, "livault")
+    assemble(vault, "personal")
+
+    def put(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    put("30-knowledge/people/Jane-Doe.md", "---\ntype: person\naliases: [Jane Doe]\n---\n\n# Jane Doe\n\nFriend from the shop, does our tax forms.\n")
+    put("30-knowledge/people/Hans-Mueller.md", "---\ntype: person\n---\n\n# Hans Müller\n\nNeighbour.\n")
+    put("30-knowledge/people/Tax-Mentor.md", "---\ntype: person\n---\n\n# Tax Mentor\n\nTax mentor from university.\n")
+    put("90-archive/2019-03-01-mentor.md", "Coffee with Tax Mentor.\n")
+    put(f"00-inbox/{(today - D.timedelta(days=5)).isoformat()}-jane.md", "Jane Doe called about the tax forms.\n")
+    folder = os.path.join(tmp, "li-export")
+    linkedin_export(folder, today)
+    zpath = os.path.join(tmp, "Basic_LinkedInDataExport_11-25-2026.zip")
+    import zipfile
+    with zipfile.ZipFile(zpath, "w") as z:
+        for f in os.listdir(folder):
+            z.write(os.path.join(folder, f), "Basic_LinkedInDataExport_11-25-2026/" + f)
+    script = os.path.join(vault, ".tools", "people.py")
+    outputs = []
+
+    def pp(*args, **env_):
+        r = subprocess.run([sys.executable, script, *args], cwd=vault, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=dict(os.environ, **env_))
+        outputs.append(r.stdout + r.stderr)
+        return r
+
+    inv = pp("linkedin", folder).stdout
+    if "6 connections · 3 you actually wrote with (both ways) · 1 of them quiet for 3+ years · 2 already in the brain" not in inv:
+        return bad(label, f"inventory counts wrong (preamble, deactivated, group chat, recruiter, draft, sponsored): {inv[:300]!r}")
+    if "Old Colleague" in inv or "#1 — wrote with you" not in inv or "Jane Doe (30-knowledge/people/Jane-Doe.md)" not in inv \
+            or "little to gain" not in inv:
+        return bad(label, f"inventory showed a name it should withhold, or missed one in the brain: {inv[:400]!r}")
+    shown = pp("linkedin", folder, "--reveal", "1,2").stdout          # newest tie first
+    if "#1: Fresh Expert" not in shown or "#2: Old Colleague" not in shown:
+        return bad(label, "--reveal does not map the number back")
+    if "export of 2026-11-25" not in pp("linkedin", zpath).stdout:
+        return bad(label, "the zip as downloaded was not read, or its date not taken from its name")
+    who = pp("who", "tax", "--linkedin", zpath).stdout
+    if "Old Colleague" not in who or "you endorsed: Tax Law (2019)" not in who or "Fresh Expert" not in who:
+        return bad(label, f"who --linkedin missed what you vouched for: {who[-300:]!r}")
+    if "as of the export of 2026-11-25, may be outdated" not in pp("who", "steuer", "--linkedin", zpath).stdout \
+            or "your recommendation 2021" not in pp("who", "vat", "--linkedin", zpath).stdout:
+        return bad(label, "an old title is not labelled with the export date, or your recommendation is missing")
+    brief = pp("brief", "jane", "--linkedin", zpath).stdout
+    hans = pp("brief", "hans", "--linkedin", zpath).stdout
+    if "wrote with you on 2 day(s)" not in brief or "last word: them" not in brief \
+            or "your message of 2021-06-01 went unanswered" not in hans:
+        return bad(label, f"brief --linkedin: tie wrong, or a garbled name (MÃ¼ller) not matched: {brief[-160:]!r} {hans[-120:]!r}")
+    rev = pp("revive", "tax", "--linkedin", zpath).stdout
+    head = rev.split("Getting back")[0]
+    # recent ties with a reason (Jane in the brain, Fresh Expert on LinkedIn) are not dormant
+    if "Old Colleague" not in head or "Jane Doe" in head or "Recruiting" in head or "Fresh Expert" in head:
+        return bad(label, f"revive: not the dormant two-way tie with a reason, or a current/one-way one: {rev[:300]!r}")
+    plain = pp("revive", "tax").stdout
+    if "Tax Mentor" not in plain or "Jane Doe" in plain.split("Getting back")[0]:
+        return bad(label, f"revive without LinkedIn did not use the brain's own dates: {plain[:300]!r}")
+    inside = os.path.join(vault, "export")
+    __import__("shutil").copytree(folder, inside)
+    company = os.path.join(tmp, "licompany")
+    assemble(company, "company")
+    set_mode(company, "company")
+    refused = [pp("linkedin", inside).returncode, pp("who", "x", "--linkedin", inside).returncode,
+               pp("linkedin", folder, BRAINWARDEN_UNATTENDED="1").returncode,
+               subprocess.run([sys.executable, os.path.join(company, ".tools", "people.py"), "linkedin", folder],
+                              cwd=company, capture_output=True, text=True).returncode]
+    if refused != [2, 2, 2, 2]:
+        return bad(label, f"the export was read inside the vault / unattended / in a company vault: {refused}")
+    leaked = [m for m in ("SECRETMARK", "SUBJECTMARK", "TITLEMARK") if any(m in o for o in outputs)]
+    if leaked:
+        return bad(label, f"message content reached the output: {leaked}")
+    ok(label)
+
+
 def check_autoreview(tmp):
     """The unattended review is the one part of the kit that acts while nobody
     watches — so every promise it makes is run here against a real assembled
@@ -1936,6 +2066,7 @@ def main():
         check_transcribe(tmp)
         check_people(tmp)
         check_resurface(tmp)
+        check_linkedin(tmp)
         check_autoreview(tmp)
         check_exam(tmp)
         check_mode_guard(tmp)

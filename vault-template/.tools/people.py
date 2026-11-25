@@ -8,6 +8,9 @@ and what to remember before you meet someone.
     python3 .tools/people.py upcoming [--days 7]   # dates in the next days that name a person
     python3 .tools/people.py contacts <file.vcf>   # address-book export: who is not in the brain yet
                     [--no-names] [--reveal 4,17]   #   …listed without names first, if a model is to sort them
+    python3 .tools/people.py revive <topic>        # quiet for 3+ years, and linked to the topic: who to call again
+    python3 .tools/people.py linkedin <export.zip> # your LinkedIn export: who you really wrote with (names withheld)
+       who/brief/revive … --linkedin <export.zip>  #   …and what you vouched for, as evidence
 
 (Windows: `py -3`.) A contact list knows that someone exists. A brain knows
 what they did, what you agreed and when you last spoke — that is the part
@@ -420,7 +423,7 @@ def cmd_close(k):
     return 0
 
 
-def cmd_who(terms, k, contacts_file):
+def cmd_who(terms, k, contacts_file, linkedin=None, me=None):
     persons, today = people(), dt.date.today()
     # "hotels germany" as ONE argument (a quoted call) is two words, not one
     folded = [fold(w) for t in terms for w in t.split() if len(w) >= 2]
@@ -453,6 +456,8 @@ def cmd_who(terms, k, contacts_file):
             print(f"    own note: {clean(l)}")
         for path, l in evidence[:2]:
             print(f"    {rel(path)}: {clean(l)}")
+    if linkedin:
+        linkedin_who(LinkedIn(linkedin, me), persons, folded, k)
     if contacts_file:
         known = {n for p in persons for n in p.names}
         extra = [c for c in read_vcards(contacts_file) if fold(c["name"]).strip() not in known
@@ -472,7 +477,7 @@ def find_person(persons, query):
     return [p for p in persons if any(q in n for n in p.names)]
 
 
-def cmd_brief(query):
+def cmd_brief(query, linkedin=None, me=None):
     persons, today = people(), dt.date.today()
     hits = find_person(persons, query)
     if not hits:
@@ -499,6 +504,14 @@ def cmd_brief(query):
     last = last_seen(p, today)
     if last:
         print(f"  last mention {(today - last).days} days ago")
+    if linkedin:
+        li = LinkedIn(linkedin, me)
+        lp = match_linkedin(persons, li).get(id(p))
+        if lp:
+            vouched = "; ".join(f"you endorsed {s_}" for s_, _ in lp["skills"][:3])
+            print(f"  LinkedIn: {li.tie(lp)}{' · ' + vouched if vouched else ''}")
+        else:
+            print("  LinkedIn: not found in the export (add `linkedin: <profile url>` to the note to link them)")
     return 0
 
 
@@ -612,6 +625,364 @@ def cmd_contacts(path, no_names, reveal):
     return 0
 
 
+# ----------------------------------------------------------------- LinkedIn
+# Your own data export (Settings → Data privacy → Download your data), read in
+# place — zip or folder, never extracted, nothing stored. What it is worth,
+# measured against the research rather than assumed:
+#   - From 20.12.2026 the connections file no longer carries company, title or
+#     email (LinkedIn's help page): sorting people by "where they work" — the
+#     usual LinkedIn import — stops working for every new export. Company and
+#     title are used only when an older export still has them, labelled with
+#     the export's date.
+#   - What stays and carries value is who you actually WROTE WITH, and when:
+#     a two-way message history is a tie, an inbound-only one is a recruiter.
+#     Message text and subjects are dropped as each row is read.
+#   - Ties silent for three years and more ("dormant") are about as useful
+#     as current close ones when reconnected, and for the novelty they bring
+#     (Levin, Walter & Murnighan 2011; Walter et al. 2015) — while people pick
+#     the wrong ones by habit. Hence `revive`, ranked by topic, not by how
+#     much you used to write.
+#   - What you vouched for — skills you endorsed, recommendations you wrote —
+#     is your own judgement, dated: expertise evidence that survives 20.12.
+MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep",
+                                      "oct", "nov", "dec"), 1)}
+DORMANT_YEARS = 3
+
+
+def li_slug(url):
+    import urllib.parse
+    m = re.search(r"linkedin\.com/in/([^/?#\s]+)", url or "", re.I)
+    return urllib.parse.unquote(m.group(1)).strip().lower() if m else ""
+
+
+def li_date(value):
+    """The four date formats one export uses, without the locale-dependent %b:
+    "22 Jan 2026", "2026-11-17 20:18:55 UTC", "2022/01/16 02:51:39 UTC",
+    "08/19/24, 11:04 PM" (US order)."""
+    v = (value or "").strip()
+    try:
+        m = re.match(r"(\d{4})[-/](\d{2})[-/](\d{2})", v)
+        if m:
+            return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        m = re.match(r"(\d{1,2}) ([A-Za-z]{3})\w* (\d{4})", v)
+        if m and m.group(2).lower() in MONTHS:
+            return dt.date(int(m.group(3)), MONTHS[m.group(2).lower()], int(m.group(1)))
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", v)
+        if m:
+            year = int(m.group(3)) + (2000 if len(m.group(3)) == 2 else 0)
+            return dt.date(year, int(m.group(1)), int(m.group(2)))
+    except ValueError:
+        pass
+    return None
+
+
+def demojibake(text):
+    """"MÃ¼ller" → "Müller": one source reports names saved twice-encoded."""
+    if re.search("[ÂÃ][\u0080-¿]", text):
+        try:
+            return text.encode("latin-1").decode("utf-8")
+        except UnicodeError:
+            pass
+    return text
+
+
+def li_name(first, last):
+    name = demojibake(f"{first or ''} {last or ''}".strip())
+    name = name.split(",")[0]                                   # "Jane Doe, MBA"
+    name = "".join(c for c in name if c.isalnum() or c in " -'.")
+    return re.sub(r"\s+", " ", name).strip()
+
+
+class LinkedIn:
+    def __init__(self, path, me=None):
+        import csv
+        import collections
+        import io
+        import zipfile
+        csv.field_size_limit(min(sys.maxsize, 2 ** 31 - 1))      # message bodies are huge HTML fields
+        self.path = Path(path).expanduser()
+        texts = collections.defaultdict(list)
+
+        def keep(name):
+            base = name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if base.endswith("_messages.csv"):                    # coach and learning chats, not people
+                return None
+            if base in ("connections.csv", "endorsement_given_info.csv", "recommendations_given.csv"):
+                return base
+            if base == "messages.csv" or "/messages/" in "/" + name.replace("\\", "/").lower():
+                return "messages.csv" if base.endswith(".csv") else None
+            return None
+        if self.path.is_file() and zipfile.is_zipfile(self.path):
+            with zipfile.ZipFile(self.path) as z:
+                for name in z.namelist():
+                    if keep(name):
+                        texts[keep(name)].append(z.read(name).decode("utf-8-sig", "replace"))
+        elif self.path.is_dir():
+            for dirpath, _, files in os.walk(self.path):
+                for f in files:
+                    full = os.path.join(dirpath, f)
+                    if keep(os.path.relpath(full, self.path)):
+                        texts[keep(os.path.relpath(full, self.path))].append(
+                            Path(full).read_text(encoding="utf-8-sig", errors="replace"))
+        else:
+            raise SystemExit(f"no LinkedIn export at {self.path} (the .zip as downloaded, or its folder)")
+        m = re.search(r"(\d{2})-(\d{2})-(\d{4})", self.path.name)
+        self.as_of = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
+
+        def rows(kind, must):
+            for text in texts.get(kind, []):
+                lines = text.splitlines(keepends=True)
+                # the header is the first line naming the columns: Connections.csv
+                # opens with a "Notes:" block of varying length
+                start = next((i for i, l in enumerate(lines) if all(w in l.lower() for w in must)), None)
+                if start is None:
+                    continue
+                for r in csv.DictReader(io.StringIO("".join(lines[start:]))):
+                    yield {(k or "").strip().lower(): (v or "") for k, v in r.items()
+                           if (k or "").strip().lower() not in ("content", "subject", "conversation title",
+                                                                "attachments", "message")}
+        self.people = {}
+        for r in rows("connections.csv", ("first name", "last name")):
+            slug = li_slug(r.get("url"))
+            if not slug:
+                continue                                            # a deactivated account: only a date
+            self.people[slug] = {"slug": slug, "name": li_name(r.get("first name"), r.get("last name")),
+                                 "connected": li_date(r.get("connected on")), "company": r.get("company", "").strip(),
+                                 "position": r.get("position", "").strip(), "days": set(), "mine": 0, "theirs": 0,
+                                 "last": None, "last_by": None, "skills": [], "recs": []}
+        convs = collections.defaultdict(list)
+        names = {}
+        for r in rows("messages.csv", ("conversation id", "date")):
+            if r.get("is message draft", "").strip().lower() in ("yes", "true"):
+                continue
+            sender = li_slug(r.get("sender profile url"))
+            if not sender:
+                continue                                            # sponsored InMail, "LinkedIn Member"
+            to = [li_slug(u) for u in re.split(r"[;,]\s*", r.get("recipient profile urls", "")) if li_slug(u)]
+            names.setdefault(sender, r.get("from", "").strip())
+            when = li_date(r.get("date"))
+            if when:
+                convs[r.get("conversation id")].append((sender, to, when))
+        counts = collections.Counter(x for msgs in convs.values() for x in {p for s, to, _ in msgs for p in [s, *to]})
+        self.me = li_slug(me) if me else (counts.most_common(1)[0][0] if counts else "")
+        for msgs in convs.values():
+            others = {p for s, to, _ in msgs for p in [s, *to]} - {self.me}
+            if len(others) != 1:
+                continue                                            # group chats are no tie signal
+            other = others.pop()
+            p = self.people.setdefault(other, {"slug": other, "name": demojibake(names.get(other, "")),
+                                               "connected": None, "company": "", "position": "", "days": set(),
+                                               "mine": 0, "theirs": 0, "last": None, "last_by": None,
+                                               "skills": [], "recs": []})
+            for s, _, when in sorted(msgs, key=lambda m: m[2]):
+                p["days"].add(when)
+                p["mine" if s == self.me else "theirs"] += 1
+                if not p["last"] or when >= p["last"]:
+                    p["last"], p["last_by"] = when, ("you" if s == self.me else "them")
+        for r in rows("endorsement_given_info.csv", ("skill name", "endorsee")):
+            p = self.people.get(li_slug(r.get("endorsee public url")))
+            if p and r.get("skill name", "").strip():
+                p["skills"].append((r["skill name"].strip(), li_date(r.get("endorsement date"))))
+        by_name = {fold(p["name"]): p for p in self.people.values() if p["name"]}
+        for r in rows("recommendations_given.csv", ("first name", "text")):
+            p = by_name.get(fold(li_name(r.get("first name"), r.get("last name"))))
+            if p:
+                p["recs"].append((r.get("text", "").strip(), li_date(r.get("creation date"))))
+        if not self.as_of:
+            dates = [p["last"] for p in self.people.values() if p["last"]] + \
+                    [p["connected"] for p in self.people.values() if p["connected"]]
+            self.as_of = max(dates) if dates else None
+
+    @staticmethod
+    def two_way(p):
+        return p["mine"] > 0 and p["theirs"] > 0
+
+    def evidence(self, p, folded_terms):
+        """Topic evidence from what YOU said about them (strongest first)."""
+        out = []
+        for text, when in p["recs"]:
+            ft = fold(text)
+            hit = next((t for t in folded_terms if t in ft), None)
+            if hit:
+                i = ft.find(hit)
+                out.append((2, f"your recommendation{' ' + str(when.year) if when else ''}: "
+                               f"\"…{clean(text[max(0, i - 50):i + 90], 140)}…\""))
+        for skill, when in p["skills"]:
+            if any(t in fold(skill) for t in folded_terms):
+                out.append((1, f"you endorsed: {skill}{' (' + str(when.year) + ')' if when else ''}"))
+        role = " ".join(x for x in (p["position"], p["company"]) if x)
+        if role and any(t in fold(role) for t in folded_terms):
+            out.append((1, f"{p['position'] or '?'} at {p['company'] or '?'} — as of the export"
+                           f"{' of ' + str(self.as_of) if self.as_of else ''}, may be outdated"))
+        return out
+
+    def tie(self, p):
+        if self.two_way(p):
+            return (f"wrote with you on {len(p['days'])} day(s), last {p['last']} "
+                    f"(last word: {p['last_by']})")
+        if p["mine"] and not p["theirs"]:
+            return f"your message of {p['last']} went unanswered"
+        if p["connected"]:
+            return f"connected {p['connected']}, no messages"
+        return "no messages"
+
+
+def match_linkedin(persons, li):
+    """Brain person ↔ LinkedIn person: the `linkedin:` field of a person note
+    (URL or slug) first — the one reliable key — then the full name. A name
+    two people share is left unmatched, never guessed."""
+    out, names = {}, {}
+    for p in li.people.values():
+        if p["name"] and len(p["name"].split()) >= 2:
+            names.setdefault(fold(p["name"]), []).append(p)
+    for person in persons:
+        field = person.front.get("linkedin", "") if person.group is None else ""
+        slug = li_slug(field) or field.strip().strip("/").lower()
+        if slug and slug in li.people:
+            out[id(person)] = li.people[slug]
+            continue
+        for n in person.names:
+            hits = names.get(n, [])
+            if len(hits) == 1:
+                out[id(person)] = hits[0]
+                break
+    return out
+
+
+def linkedin_guard(path):
+    """The export is other people's data: it stays outside the vault (a vault
+    is versioned, and git never forgets), it is not for a company vault (there
+    the company is the controller and needs its own legal basis for an
+    employee's private network), and never for an unattended run."""
+    if os.environ.get("BRAINWARDEN_UNATTENDED"):
+        print("refused while unattended: LinkedIn only in a normal chat")
+        return 2
+    real = os.path.realpath(os.path.expanduser(path))
+    if real == os.path.realpath(VAULT) or real.startswith(os.path.realpath(VAULT) + os.sep):
+        print("refused: the export lies inside the vault — move it out first (the vault is versioned, "
+              "and other people's data in its history cannot be taken back)")
+        return 2
+    mode = ""
+    try:
+        m = re.search(r"(?i)\b(?:vault\s+)?mode:?\**\s*\**\s*(personal|professional|company)",
+                      (VAULT / "CLAUDE.md").read_text(encoding="utf-8", errors="replace"))
+        mode = m.group(1).lower() if m else ""
+    except OSError:
+        pass
+    if mode == "company":
+        print("refused in a company vault: there the company processes the data, and an employee's private "
+              "network needs its own legal basis — keep roles, not dossiers, in a company brain")
+        return 2
+    if mode == "professional":
+        print("note: in a work brain the GDPR household exemption probably does not apply — "
+              "use this for your own network, and keep what you file factual")
+    return 0
+
+
+def cmd_linkedin(path, reveal, me):
+    refused = linkedin_guard(path)
+    if refused:
+        return refused
+    li = LinkedIn(path, me)
+    persons, today = people(), dt.date.today()
+    matched = match_linkedin(persons, li)
+    linked = {id(v) for v in matched.values()}
+    two = [p for p in li.people.values() if li.two_way(p)]
+    rest = sorted((p for p in two if id(p) not in linked), key=lambda p: p["last"], reverse=True)
+    if reveal:
+        want = {int(x) for x in re.findall(r"\d+", reveal)}
+        for i, p in enumerate(rest, 1):
+            if i in want:
+                print(f"#{i}: {p['name'] or p['slug']} — {li.tie(p)}")
+        return 0
+    dormant = [p for p in two if p["last"] and (today - p["last"]).days >= 365 * DORMANT_YEARS]
+    print(f"LinkedIn export{' of ' + str(li.as_of) if li.as_of else ''}: {sum(1 for p in li.people.values() if p['connected'])} "
+          f"connections · {len(two)} you actually wrote with (both ways) · {len(dormant)} of them quiet for "
+          f"{DORMANT_YEARS}+ years · {len(matched)} already in the brain")
+    if len(two) < 20:
+        print(f"  little to gain here: only {len(two)} people you wrote with both ways — the brain's notes "
+              "already say more than this export")
+    for person in persons:
+        p = matched.get(id(person))
+        if p:
+            print(f"  {person.name} ({person.where()}) — {li.tie(p)}")
+    if rest:
+        print(f"wrote with you, no note yet — names withheld, `--reveal 1,4` shows who a number is:")
+        for i, p in enumerate(rest[:30], 1):
+            print(f"  #{i} — {li.tie(p)}")
+    return 0
+
+
+def linkedin_who(li, persons, folded, k):
+    matched = match_linkedin(persons, li)
+    brain = {id(v): person for person in persons for v in [matched.get(id(person))] if v}
+    ranked = []
+    for p in li.people.values():
+        ev = li.evidence(p, folded)
+        if ev:
+            ranked.append((sum(w for w, _ in ev) + (0.5 if li.two_way(p) else 0), p, ev))
+    ranked.sort(key=lambda r: r[0], reverse=True)
+    if ranked:
+        print(f"\nfrom LinkedIn (export{' of ' + str(li.as_of) if li.as_of else ''}):")
+    for _, p, ev in ranked[:k]:
+        note = brain.get(id(p))
+        print(f"  {p['name'] or p['slug']}{' — ' + note.where() if note else ''} · {li.tie(p)}")
+        for _, line in ev[:2]:
+            print(f"      {line}")
+
+
+def cmd_revive(terms, k, years, linkedin, me):
+    """Who to get back in touch with about this — quiet for years, and with a
+    reason in the brain or in what you vouched for. Ranked by the topic, never
+    by how much you used to write: people prefer the ties they used most,
+    which are the ones with the least news (Walter et al. 2015)."""
+    if linkedin:
+        refused = linkedin_guard(linkedin)
+        if refused:
+            return refused
+    folded = [fold(w) for t in terms for w in t.split() if len(w) >= 2]
+    if not folded:
+        print("Usage: people.py revive <topic words> [--linkedin <export>]")
+        return 1
+    persons, today = people(), dt.date.today()
+    collect(persons)
+    li = LinkedIn(linkedin, me) if linkedin else None
+    matched = match_linkedin(persons, li) if li else {}
+    limit = dt.timedelta(days=365 * years)
+    out, seen = [], set()
+    for person in persons:
+        own = [l for l in person.own_lines() if any(t in fold(l) for t in folded)]
+        p = matched.get(id(person))
+        ev = li.evidence(p, folded) if p else []
+        score = 10 * min(len(own), 2) + sum(w for w, _ in ev)
+        last = p["last"] if p and li.two_way(p) else last_seen(person, today)
+        if score and last and today - last >= limit:
+            out.append((score, person.name, person.where(), last,
+                        (li.tie(p) if p else f"last mention {last}"), [clean(l) for l in own[:1]] + [e for _, e in ev[:1]]))
+            if p:
+                seen.add(id(p))
+    if li:
+        for p in li.people.values():
+            if id(p) in seen or not li.two_way(p) or not p["last"] or today - p["last"] < limit:
+                continue
+            ev = li.evidence(p, folded)
+            if ev:
+                out.append((sum(w for w, _ in ev), p["name"] or p["slug"], "LinkedIn", p["last"], li.tie(p),
+                            [e for _, e in ev[:2]]))
+    if not out:
+        print(f"nobody quiet for {years}+ years is linked to: {' '.join(terms)}")
+        return 0
+    out.sort(key=lambda o: o[0], reverse=True)
+    print(f"quiet for {years}+ years, and linked to \"{' '.join(terms)}\":")
+    for _, name, where, last, tie, lines in out[:k]:
+        print(f"\n{name} — {where} · {tie}")
+        for l in lines:
+            print(f"    {l}")
+    print("\nGetting back in touch is welcomed more than people expect (Liu et al. 2023); "
+          "ask by call or in person rather than by text (Roghanizad & Bohns).")
+    return 0
+
+
 def main(argv=None):
     utf8_stdout()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -620,10 +991,24 @@ def main(argv=None):
     w.add_argument("terms", nargs="+")
     w.add_argument("--k", type=int, default=3)
     w.add_argument("--contacts", help="an address-book export (.vcf) to look in as well")
+    w.add_argument("--linkedin", help="your LinkedIn data export (.zip or folder) to look in as well")
+    w.add_argument("--me", help="your own LinkedIn profile URL, if it is not detected")
     c = sub.add_parser("close")
     c.add_argument("--k", type=int, default=15)
     b = sub.add_parser("brief")
     b.add_argument("name", nargs="+")
+    b.add_argument("--linkedin")
+    b.add_argument("--me")
+    r = sub.add_parser("revive")
+    r.add_argument("terms", nargs="+")
+    r.add_argument("--k", type=int, default=5)
+    r.add_argument("--years", type=int, default=DORMANT_YEARS)
+    r.add_argument("--linkedin")
+    r.add_argument("--me")
+    li_ = sub.add_parser("linkedin")
+    li_.add_argument("export")
+    li_.add_argument("--reveal")
+    li_.add_argument("--me")
     u = sub.add_parser("upcoming")
     u.add_argument("--days", type=int, default=7)
     v = sub.add_parser("contacts")
@@ -631,16 +1016,25 @@ def main(argv=None):
     v.add_argument("--no-names", action="store_true")
     v.add_argument("--reveal")
     a = ap.parse_args(argv)
-    if os.environ.get("BRAINWARDEN_UNATTENDED") and (a.cmd == "contacts" or getattr(a, "contacts", None)):
+    if os.environ.get("BRAINWARDEN_UNATTENDED") and (a.cmd in ("contacts", "linkedin") or getattr(a, "contacts", None)
+                                                    or getattr(a, "linkedin", None)):
         # the address book lies outside the vault: that needs the person in the chat
         print("refused while unattended: contacts only in a normal chat")
         return 2
     if a.cmd == "who":
-        return cmd_who(a.terms, a.k, a.contacts)
+        if a.linkedin and linkedin_guard(a.linkedin):
+            return 2
+        return cmd_who(a.terms, a.k, a.contacts, a.linkedin, a.me)
+    if a.cmd == "revive":
+        return cmd_revive(a.terms, a.k, a.years, a.linkedin, a.me)
+    if a.cmd == "linkedin":
+        return cmd_linkedin(a.export, a.reveal, a.me)
     if a.cmd == "close":
         return cmd_close(a.k)
     if a.cmd == "brief":
-        return cmd_brief(" ".join(a.name))
+        if a.linkedin and linkedin_guard(a.linkedin):
+            return 2
+        return cmd_brief(" ".join(a.name), a.linkedin, a.me)
     if a.cmd == "upcoming":
         return cmd_upcoming(a.days)
     if a.cmd == "contacts":

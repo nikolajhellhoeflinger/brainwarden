@@ -281,7 +281,10 @@ garden; it never replaces the plants.
 - People: `python3 .tools/people.py who <topic>` (who can help, with evidence) ·
   `brief <name>` (before a meeting) · `close` (dated mentions, recent ones count
   most) · `upcoming` (dates naming a person) · `contacts <file.vcf>` (address
-  book, read-only). It stores nothing about anyone; the person-note rule stands.
+  book, read-only) · `revive <topic>` (quiet for years, linked to the topic) ·
+  `linkedin <export.zip>` and `--linkedin` (who you actually wrote with, what you
+  vouched for — never message text; the export stays outside the vault). It
+  stores nothing about anyone; the person-note rule stands.
 - Voice memos: `python3 .tools/transcribe.py` turns audio files in the inbox into
   captures, locally (`--check` names the speech engine; `--auto on` lets the
   runner's tick do it). The recording moves to `90-archive/voice/` and stays

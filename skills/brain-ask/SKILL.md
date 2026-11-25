@@ -35,7 +35,8 @@ command (on most Windows machines `py -3`; the global rules name it).
    "who can I ask about X?" → `people.py who <topic words>` (ranked by what
    their notes and the lines about them say, with the evidence — quote it,
    never offer a bare name); "I'm meeting X" → `people.py brief <name>`;
-   "who haven't I heard from?" → `people.py close`. Read the person notes it
+   "who haven't I heard from?" → `people.py close`; "who could I get back in
+   touch with about X?" → `people.py revive <topic>`. Read the person notes it
    names before answering.
 3. **Decisions are special:** if the question touches a past decision,
    quote the decision record (`40-decisions/`) including its reasoning —
