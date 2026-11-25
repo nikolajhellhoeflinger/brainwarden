@@ -181,7 +181,8 @@ def check_harvest_export(tmp):
              # --show has to cut it before the end
              {"sender": "human", "text": mine2 + " " + "lorem " * 200_000 + tail,
               "created_at": "2026-03-10T09:05:00Z"}]},
-        {"uuid": "22222222-bbbb-4bbb-8bbb-000000000002", "name": "Umzug nach Graz",
+        # an escape and a right-to-left override: never to reach a terminal or a model
+        {"uuid": "22222222-bbbb-4bbb-8bbb-000000000002", "name": "Umzug\x1b nach \u202eGraz",
          "chat_messages": [
              {"sender": "human", "text": other, "created_at": "2026-06-01T12:00:00Z"},
              {"sender": "assistant", "text": reply2, "created_at": "2026-06-01T12:00:09Z"}]},
@@ -280,7 +281,7 @@ def check_harvest_calendar(tmp):
         b'DTSTART;TZID="(UTC+01:00) Amsterdam, Berlin":' + ics_day(7) + b"T090000",
         b"SUMMARY:Zahnarzt\\, Kontrolle", b"END:VEVENT",
         b"BEGIN:VEVENT", b"UID:e4", b"DTSTART:" + ics_day(9) + b"T120000Z",
-        b"SUMMARY:Flug nach Wien", b"END:VEVENT",
+        b"SUMMARY:Flug nach \x1bWien", b"END:VEVENT",
         b"BEGIN:VEVENT", b"UID:e5", b"DTSTART;VALUE=DATE:" + ics_day(-10),
         b"SUMMARY:PAST-8d2e", b"END:VEVENT",
         b"BEGIN:VEVENT", b"UID:e6", b"DTSTART;VALUE=DATE:" + ics_day(200),

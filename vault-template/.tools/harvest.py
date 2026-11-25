@@ -572,9 +572,17 @@ def message_text(msg):
     return "\n".join(p["text"] for p in parts if isinstance(p, dict)
                      and p.get("type", "text") == "text" and isinstance(p.get("text"), str)).strip()
 
+def printable(text):
+    """Titles, messages and calendar entries come from outside and go to a
+    terminal — and often straight into a model. An escape sequence in a title
+    can rewrite the terminal, a right-to-left override can hide what a line
+    says. Control and format characters go; a line break becomes a space."""
+    return "".join(" " if c in "\n\r\t" else c for c in text if c in "\n\r\t"
+                   or unicodedata.category(c)[0] != "C")
+
 def conversation_title(conv):
     name = conv.get("name")
-    name = re.sub(r"\s+", " ", name).strip() if isinstance(name, str) else ""
+    name = re.sub(r"\s+", " ", printable(name)).strip() if isinstance(name, str) else ""
     return name[:100] or "(untitled)"
 
 def last_activity(conv):
@@ -593,7 +601,7 @@ def claude_export(path, since, words, cap):
                 continue
             mine = sum(1 for m in messages_of(conv) if is_human(m))
             total_mine += mine
-            rows.append((last_activity(conv), mine, str(conv.get("uuid") or "")[:8],
+            rows.append((last_activity(conv), mine, printable(str(conv.get("uuid") or ""))[:8],
                          conversation_title(conv)))
     except (OSError, LookupError, ValueError, zipfile.BadZipFile) as e:
         if not rows:
@@ -653,10 +661,10 @@ def show_conversation(path, wanted, cap):
         return 1
     conv = hits[0]
     mine = [m for m in messages_of(conv) if is_human(m)]
-    print(f"{last_activity(conv)[:10] or '?'}  {conversation_title(conv)}  ({conv.get('uuid')})")
+    print(f"{last_activity(conv)[:10] or '?'}  {conversation_title(conv)}  ({printable(str(conv.get('uuid')))})")
     print(f"your messages: {len(mine)} — Claude's replies are not printed\n")
     for m in mine[:cap]:
-        text = re.sub(r"\s+", " ", message_text(m))
+        text = re.sub(r"\s+", " ", printable(message_text(m)))
         if len(text) > SHOW_CHARS:
             text = text[:SHOW_CHARS].rsplit(" ", 1)[0] + " …"
         when = stamp(m.get("created_at"))[:16].replace("T", " ")
@@ -683,7 +691,7 @@ def ics_date(value):
 def ics_text(value):
     """`\\,` `\\;` `\\\\` are escapes, `\\n` a line break — one line here."""
     value = re.sub(r"\\([\\,;nN])", lambda m: " " if m.group(1) in "nN" else m.group(1), value)
-    return re.sub(r"\s+", " ", value).strip()
+    return re.sub(r"\s+", " ", printable(value)).strip()
 
 def ics_events(text):
     """The properties of every VEVENT that matter here.

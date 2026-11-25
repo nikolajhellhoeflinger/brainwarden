@@ -291,9 +291,12 @@ garden; it never replaces the plants.
   `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,
   `!Review overdue.md`, `Set aside.md`) are not captures — never file them.
 - Cold start from past sessions: `python3 .tools/harvest.py` (inventory
-  only) and `--candidates` (deterministic pre-filter). It never writes and
-  never calls a model — see Step 8a of the setup runbook for the procedure
-  and the consent rules.
+  only) and `--candidates` (deterministic pre-filter); from the Claude app's
+  data export `--claude-export <zip>` (titles and dates only; `--show <id>`
+  prints one conversation's own messages); from a calendar `--ics <file>`
+  (upcoming dates in the Deadlines format, to confirm before filing). It
+  never writes and never calls a model — see Step 8a of the setup runbook
+  for the procedure and the consent rules.
 - Finished project / ended area → move to `90-archive/`, and remove it
   from the source folder's `index.md` entry points.
 - The structure may EVOLVE: if reviews show a folder or area no longer
