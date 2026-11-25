@@ -84,6 +84,20 @@ def norm(rel):
     return unicodedata.normalize("NFC", rel.replace("\\", "/"))
 
 
+def notes_present():
+    """Every note in the vault, keyed by its NFC spelling. Existence cannot be
+    asked of the file system directly: macOS finds `ö` however it is encoded,
+    Linux and Windows only find the exact bytes — and a vault synced from a
+    Mac carries decomposed names onto those systems."""
+    out = set()
+    for dirpath, dirnames, filenames in os.walk(VAULT):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for f in filenames:
+            if f.endswith(".md"):
+                out.add(norm(os.path.relpath(os.path.join(dirpath, f), VAULT)))
+    return out
+
+
 # ----------------------------------------------------------------- backends
 def search_backend():
     spec = importlib.util.spec_from_file_location("brain_search", VAULT / ".tools" / "search.py")
@@ -126,11 +140,12 @@ def qmd_backend(mode, collection):
 # --------------------------------------------------------------------- exam
 def run_exam(ranked):
     results = []
+    present = notes_present()
     for q in load():
         expect = [norm(e) for e in q.get("expect", [])]
         if not expect or not q.get("terms"):
             continue
-        if not any((VAULT / e).exists() for e in expect):
+        if not any(e in present for e in expect):
             results.append(dict(q=q, rank=None, stale=True, top=[]))
             continue
         hits = ranked(q["terms"])[:DEPTH]
@@ -198,7 +213,8 @@ def cmd_exam(a):
 
 def cmd_add(a):
     expect = [norm(e) for e in a.expect]
-    missing = [e for e in expect if not (VAULT / e).exists()]
+    present = notes_present()
+    missing = [e for e in expect if e not in present]
     if missing:
         print(f"refused: {', '.join(missing)} does not exist in this vault (paths are relative to its root)")
         return 1
