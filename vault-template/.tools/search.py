@@ -234,7 +234,11 @@ def git_reviews(root):
         return "reviews: unknown (git log failed)"
     if not log:
         return "reviews: 0 (no commit mentions a review yet)"
-    return f"reviews: {len(log)} (last {log[0]})"
+    # Days, not commits: one review often makes several commits (the
+    # unattended runner adds a follow-up, a person may commit twice), and
+    # counting each one inflated the number the review history rests on.
+    days = len(set(log))
+    return f"reviews: {days} day{'s' if days != 1 else ''} (last {log[0]})"
 
 def stats(root):
     """--stats: honest numbers about this vault — folders, maturity, age."""

@@ -257,6 +257,220 @@ def check_stale_reference():
     ok("no stale 'Start here'")
 
 
+FAKE_CLAUDE = r'''
+import os, pathlib, sys
+count = pathlib.Path(os.environ["FAKE_COUNT"])
+count.write_text(str(int(count.read_text() or 0) + 1 if count.exists() else 1))
+pathlib.Path(os.environ["FAKE_PROMPT"]).write_text(sys.argv[sys.argv.index("-p") + 1], encoding="utf-8")
+mode = os.environ.get("FAKE_MODE", "ok")
+if mode == "ok":                      # what a review does: file the capture
+    src = pathlib.Path("00-inbox", "2026-01-01-thought.md")
+    if src.exists():
+        pathlib.Path("30-knowledge", "thought.md").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        src.unlink()
+    print("review done")
+    sys.exit(0)
+pathlib.Path("30-knowledge", "half-done.md").write_text("partial work\n", encoding="utf-8")
+if mode == "flag":
+    print("API Error: Claude Code is unable to respond to this request - our safeguards flagged it")
+sys.exit(1)
+'''
+
+
+def check_autoreview(tmp):
+    """The unattended review is the one part of the kit that acts while nobody
+    watches — so every promise it makes is run here against a real assembled
+    vault, with a stand-in for `claude` that records how often it was called
+    and what it was told. Nothing touches the network or the scheduler."""
+    label = "unattended review keeps its promises"
+    vault = os.path.join(tmp, "autovault")
+    assemble(vault, "personal")
+    set_mode(vault, "personal")
+    script = os.path.join(vault, ".tools", "autoreview.py")
+    fake = os.path.join(tmp, "fake_claude.py")
+    with open(fake, "w", encoding="utf-8") as fh:
+        fh.write(FAKE_CLAUDE)
+    cfg = {"claude_cmd": [sys.executable, fake], "net_check": False}
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    ident = {"GIT_AUTHOR_NAME": "check", "GIT_AUTHOR_EMAIL": "check@example.invalid",
+             "GIT_COMMITTER_NAME": "check", "GIT_COMMITTER_EMAIL": "check@example.invalid"}
+    count, prompt = os.path.join(tmp, "count"), os.path.join(tmp, "prompt")
+    env = dict(os.environ, **ident, FAKE_COUNT=count, FAKE_PROMPT=prompt,
+               AUTOREVIEW_RETRY_WAIT="0", AUTOREVIEW_IDLE_SECONDS="0")
+
+    def sh(*args, cwd=vault):
+        return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=env)
+
+    def ar(*args, mode="ok", **extra):
+        return subprocess.run([sys.executable, script, *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=dict(env, FAKE_MODE=mode, **extra))
+
+    def calls():
+        try:
+            return int(open(count).read())
+        except (OSError, ValueError):
+            return 0
+
+    def write(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    exists = lambda rel: os.path.exists(os.path.join(vault, *rel.split("/")))
+    read = lambda rel: open(os.path.join(vault, *rel.split("/")), encoding="utf-8").read()
+    log = lambda: sh("git", "log", "--format=%s").stdout
+
+    # the rhythm: aims for Friday, catches up a missed week, never drifts
+    spec = importlib.util.spec_from_file_location("ar", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    d = __import__("datetime").date
+    rhythm = [(d(2026, 11, 27), d(2026, 11, 20), True),    # Friday, a week later
+              (d(2026, 11, 25), d(2026, 11, 19), False),   # Wednesday, six days
+              (d(2026, 11, 25), d(2026, 11, 17), True),    # Wednesday, eight days: catch up
+              (d(2026, 11, 28), d(2026, 11, 24), False),   # Saturday, four days
+              (d(2026, 11, 29), d(2026, 11, 24), True),    # Sunday, five days
+              (d(2026, 11, 25), None, True)]               # never ran
+    wrong = [str(on) for on, last, want in rhythm if mod.is_due(on, last, 5) != want]
+    if wrong:
+        return bad(label, f"is_due wrong on {wrong}")
+
+    sh("git", "init", "-q")
+    write("00-inbox/2026-01-01-thought.md", "a thought worth keeping\n")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "setup")
+    write("00-inbox/2026-01-02-uncommitted.md", "captured this week, not yet committed\n")
+    write("30-knowledge/tools.md", "We compared metasploit with other tools.\n")
+
+    # 1. success: starting point committed, work done, stamp written, one call
+    r = ar("run", "--now")
+    if r.returncode or calls() != 1:
+        return bad(label, f"success run: exit {r.returncode}, {calls()} calls {r.stderr.strip()[:120]}")
+    if "Starting point before the weekly run" not in log() or not exists("30-knowledge/thought.md"):
+        return bad(label, "success run did not commit the starting point or did no work")
+    if not exists(".tools/logs/last-success") or sh("git", "status", "--porcelain").stdout.strip():
+        return bad(label, "success run left no stamp or uncommitted changes")
+    told = open(prompt, encoding="utf-8").read()
+    if "Autonomous mode" not in told or "30-knowledge/tools.md" not in told:
+        return bad(label, "the run was not told autonomous mode / the note to leave out")
+
+    # 2. undo takes back exactly the review — not the week's captures
+    r = ar("undo")
+    if r.returncode or exists("30-knowledge/thought.md") or not exists("00-inbox/2026-01-01-thought.md"):
+        return bad(label, f"undo did not restore the vault: {r.stdout.strip()[:120]}")
+    if not exists("00-inbox/2026-01-02-uncommitted.md"):
+        return bad(label, "undo took back a capture that predates the review")
+    if ar("undo").returncode == 0:
+        return bad(label, "undo ran twice on the same review")
+
+    # 3. a safeguard abort: no retry (it would fail the same way), visible, committed.
+    #    Dated on a day of its own: a failed run must not count as a review day.
+    r = ar("run", "--now", mode="flag", GIT_AUTHOR_DATE="2020-01-02T12:00:00")
+    if r.returncode == 0 or calls() != 2:
+        return bad(label, f"safeguard abort: exit {r.returncode}, {calls() - 1} calls (want 1)")
+    if not exists("00-inbox/!Review failed.md") or "safeguards" not in read("00-inbox/!Review failed.md"):
+        return bad(label, "safeguard abort left no failure notice naming the cause")
+    if sh("git", "status", "--porcelain").stdout.strip() or "partial work saved" not in log():
+        return bad(label, "partial work of an aborted run was not committed")
+
+    # 4. a plain failure: exactly one retry
+    r = ar("run", "--now", mode="fail")
+    if r.returncode == 0 or calls() != 4:
+        return bad(label, f"plain failure: {calls() - 2} calls (want 2: one retry)")
+
+    # 5. the next success clears the notice
+    if ar("run", "--now").returncode or exists("00-inbox/!Review failed.md"):
+        return bad(label, "a successful run did not clear the failure notice")
+
+    # 6. one at a time; an orphaned lock is cleared, not obeyed
+    before = calls()
+    write(".tools/logs/.running", str(os.getpid()))
+    ar("run", "--now")
+    if calls() != before or "already running" not in read(".tools/logs/deferred.log"):
+        return bad(label, "a second run started while one was running")
+    write(".tools/logs/.running", "999999")
+    ar("run", "--now")
+    if calls() != before + 1 or exists(".tools/logs/.running"):
+        return bad(label, "an orphaned lock blocked the run")
+
+    # 7. set aside: moved, named, never deleted — and brought back
+    write("00-inbox/2026-01-03-scan.md", "Notes from the sqlmap session.\n")
+    r = ar("set-aside")
+    aside = "00-inbox/.set-aside/2026-01-03-scan.md"
+    if r.returncode or not exists(aside) or "2026-01-03-scan.md" not in read("00-inbox/Set aside.md"):
+        return bad(label, "a risky capture was not set aside and listed")
+    write("00-inbox/2026-01-03-calibration.md", "Kalibrierung des Messgeraets, ein Exploit-freier Text.\n")
+    ar("set-aside")
+    if not exists("00-inbox/2026-01-03-calibration.md"):
+        return bad(label, "one soft word (and 'Kalibrierung') set a harmless capture aside")
+    if ar("set-aside", "--restore").returncode or not exists("00-inbox/2026-01-03-scan.md") \
+            or exists("00-inbox/Set aside.md"):
+        return bad(label, "set-aside --restore did not bring the capture back")
+
+    # 8. the watchdog speaks up, and goes quiet again
+    write(".tools/logs/last-success", "2020-01-01\n")
+    spec = importlib.util.spec_from_file_location("ar2", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.watchdog(mod.load_config(), quiet=True)
+    if not exists("00-inbox/!Review overdue.md"):
+        return bad(label, "watchdog did not notice a review overdue since 2020")
+    write(".tools/logs/last-success", __import__("datetime").date.today().isoformat() + "\n")
+    mod.watchdog(mod.load_config(), quiet=True)
+    if exists("00-inbox/!Review overdue.md"):
+        return bad(label, "watchdog notice did not disappear after a success")
+
+    # 9. the notices are kit pages, not captures: the vault still measures clean
+    clean = os.path.join(tmp, "autovault-clean")
+    assemble(clean, "personal")
+    set_mode(clean, "personal")
+    _, base_counts = hygiene_findings(clean)
+    spec = importlib.util.spec_from_file_location("ar3", os.path.join(clean, ".tools", "autoreview.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.watchdog(mod.load_config(), quiet=True)                 # never succeeded → overdue
+    mod.write_fail_note("test", "test")
+    mod.write_set_aside_note([("x.md", ["kali"])])
+    _, counts = hygiene_findings(clean)
+    grown = {k: v for k, v in counts.items() if v > base_counts.get(k, 0)}
+    if grown:
+        return bad(label, f"its notices count as findings: {grown}")
+    # Where the kit-page marker actually matters: without it a notice counts
+    # as a note in --stats and ranks like one in every search.
+    r = run([os.path.join(clean, ".tools", "search.py"), "--stats"], cwd=clean)
+    if not r.stdout.startswith("notes: 0 "):
+        return bad(label, f"its notices count as notes: {r.stdout.splitlines()[0] if r.stdout else r.stderr[:80]}")
+    # and one run is one review day, however many commits it made
+    stats = run([os.path.join(vault, ".tools", "search.py"), "--stats"], cwd=vault).stdout
+    if "reviews: 1 day (" not in stats:
+        return bad(label, "--stats does not count one day of runs as one review day: "
+                          + next((l for l in stats.splitlines() if l.startswith("reviews")), "?"))
+
+    # 10. never commit into a repository the vault only lives inside
+    outer = os.path.join(tmp, "outer")
+    inner = os.path.join(outer, "brain")
+    assemble(inner, "personal")
+    set_mode(inner, "personal")
+    with open(os.path.join(inner, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    sh("git", "init", "-q", cwd=outer)
+    sh("git", "commit", "-q", "--allow-empty", "-m", "outer", cwd=outer)
+    r = subprocess.run([sys.executable, os.path.join(inner, ".tools", "autoreview.py"), "run", "--now"],
+                       capture_output=True, text=True, env=env)
+    if r.returncode != 2 or sh("git", "log", "--format=%s", cwd=outer).stdout.strip() != "outer":
+        return bad(label, "it ran (or committed) inside a repository that is not the vault's own")
+
+    # 11. the scheduler entry for each system, without installing anything
+    for platform, marker in (("mac", "StartInterval"), ("windows", "schtasks"), ("linux", "OnUnitActiveSec")):
+        r = ar("install", "--dry-run", "--platform", platform)
+        if r.returncode or marker not in r.stdout:
+            return bad(label, f"install --dry-run for {platform}: {r.stdout.strip()[:120]}")
+    ok(label)
+
+
 def check_kit_portability():
     """The kit itself must survive a `git clone` on Windows and on Linux."""
     spec = importlib.util.spec_from_file_location("hyg", tool("hygiene.py"))
@@ -762,6 +976,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         check_harvest(tmp)
         check_hooks(tmp)
+        check_autoreview(tmp)
         check_mode_guard(tmp)
         check_translated_vault(tmp)
         check_translated_company(tmp)

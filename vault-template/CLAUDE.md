@@ -274,6 +274,10 @@ garden; it never replaces the plants.
   will never match this schema. The report names what it skipped, so the
   exemption stays visible. Everything else stays in: a report that is
   permanently red gets ignored, and then the real findings go unread.
+- Unattended weekly review (only if the person asked for it):
+  `python3 .tools/autoreview.py install`, then `status` · `run --now` ·
+  `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,
+  `!Review overdue.md`, `Set aside.md`) are not captures — never file them.
 - Cold start from past sessions: `python3 .tools/harvest.py` (inventory
   only) and `--candidates` (deterministic pre-filter). It never writes and
   never calls a model — see Step 8a of the setup runbook for the procedure

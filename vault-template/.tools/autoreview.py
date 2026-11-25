@@ -1,0 +1,1052 @@
+#!/usr/bin/env python3
+"""The weekly review, unattended — built around the ways unattended runs die.
+
+    python3 .tools/autoreview.py install       # once: schedule it (asks nothing, prints what it did)
+    python3 .tools/autoreview.py status        # when did it last run, why not since?
+    python3 .tools/autoreview.py run --now     # by hand, right now, watching the log
+    python3 .tools/autoreview.py undo          # take back the last unattended review
+    python3 .tools/autoreview.py set-aside     # --check · --restore (see below)
+    python3 .tools/autoreview.py uninstall
+
+(Windows: `py -3` instead of `python3`.) The scheduler calls `run` every
+twenty minutes. Almost every call ends within milliseconds, because the
+review is not due — the point of ticking often is that a missed Friday is
+caught up the next time someone actually sits at the machine, instead of
+the next Friday.
+
+Every guard below answers a run that really failed. They are worth reading
+before anyone "simplifies" this file:
+
+  1. A run died ten minutes in on the CONTENT of one inbox note: the model's
+     real-time safeguards abort a headless call when a note is dense with,
+     for example, names of offensive security tools. Same with every model,
+     however the task is phrased — the content in the prompt is enough.
+     Worse than the abort was the aftermath: the only commit was at the very
+     end, so a day's partial work lay unversioned, and the only sign was a
+     system notification nobody keeps. Answer: `set-aside` moves such notes
+     out of the way BEFORE the run (never deletes, always lists them), a
+     commit before AND after, and failures as a file in the inbox.
+  2. Two runs in a row failed with "request timed out" — and the cause was
+     the schedule. A fixed "Friday 16:00" hit a closed laptop; the scheduler
+     caught up during a 45-second maintenance wake, the model call froze
+     mid-sentence when the machine slept again, and the "retry after 60 s"
+     really ran seven hours later in the next wake window. Answer: the run
+     starts only when the machine is in use (input in the last 15 minutes),
+     the machine is kept awake during the run, and a run that the machine
+     slept through is deferred quietly — it is not a failure and must not
+     raise an alarm, or people learn to ignore the alarm.
+  3. A guard that cannot tell (the idle probe missing from PATH) blocked
+     every run silently for days. Answer: on macOS, where the probe should
+     always work, "cannot tell" is logged as such; everything deferred is
+     written to `.tools/logs/deferred.log` with its reason.
+  4. A review that never runs again looks exactly like a review with
+     nothing to do. Answer: the watchdog — every tick, no model call —
+     puts `!Review overdue.md` into the inbox once the last success is
+     older than `patience_days`, and removes it after the next success.
+
+Undo: the commit before the run marks where the review started. `undo`
+reverts exactly what the review committed (git revert — history is kept),
+never the captures that were already there.
+
+Python standard library only. Works on macOS, Windows and Linux.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+VAULT = Path(__file__).resolve().parent.parent
+TOOLS = VAULT / ".tools"
+LOGS = TOOLS / "logs"
+CONFIG = TOOLS / "autoreview.json"
+STAMP = LOGS / "last-success"
+LAST_RUN = LOGS / "last-run.json"
+DEFERRED = LOGS / "deferred.log"
+LOCK = LOGS / ".running"
+TERMS_FILE = TOOLS / "set-aside-terms.txt"
+EXCLUDE_LIST = TOOLS / "review-exclude.txt"
+
+DEFAULTS = {
+    "weekday": 5,           # ISO weekday the review aims for: 1 = Monday … 5 = Friday
+    "quiet_from": 23,       # no unattended runs from 23:00 …
+    "quiet_until": 7,       # … to 07:00
+    "idle_limit_s": 900,    # "in use" = keyboard or mouse touched in the last 15 minutes
+    "patience_days": 10,    # the watchdog speaks up after this many days without a success
+    "max_run_s": 3600,      # a review takes minutes; much longer means the machine slept
+    "model": "sonnet",
+    "net_check": True,
+    "claude_cmd": None,     # filled by `install` with the absolute path of `claude`
+}
+
+ALLOWED_TOOLS = ["Read", "Edit", "Write", "Glob", "Grep",
+                 "Bash(python3 *)", "Bash(python *)", "Bash(py *)", "Bash(git *)",
+                 "Bash(ls *)", "Bash(grep *)", "Bash(cat *)", "Bash(mkdir *)", "Bash(mv *)"]
+
+SAFEGUARD_MARK = "safeguards flagged"
+RETRY_WAIT = int(os.environ.get("AUTOREVIEW_RETRY_WAIT", "60"))
+
+# The set-aside terms that caused the documented abort. A "!" in front means
+# one hit is enough (tools whose only purpose is attacking other systems);
+# the rest occur in harmless sentences too, so only TWO different ones count.
+DEFAULT_TERMS = """\
+# Notes containing these words are set aside before an unattended review,
+# because their content can make the model's safeguards abort the whole run.
+# Nothing is deleted: set-aside notes are listed in 00-inbox/Set aside.md and
+# filed by hand in a normal chat, where they cause no trouble.
+#
+# One term per line. "!" in front: one hit is enough. Without "!": a note is
+# set aside only when it contains two DIFFERENT such terms.
+# After a run was aborted by the safeguards, add the words of the note that
+# caused it here - the failure note in the inbox says so.
+!metasploit
+!sqlmap
+!hydra
+!nikto
+!netexec
+!enum4linux
+!crackmapexec
+!mimikatz
+!cobalt strike
+!beef-xss
+!aircrack
+!hashcat
+!john the ripper
+!burp suite
+kali
+pentest
+exploit
+payload
+reverse shell
+privilege escalation
+vulnerability scan
+port scan
+nmap
+wireshark
+cve-
+red team
+"""
+
+
+# ------------------------------------------------------------------ basics
+def utf8_stdout():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
+
+def folder(prefix, fallback):
+    """Folders are recognised by NUMBER, not by name: a translated vault
+    calls its inbox `00-eingang`, and the tools must still find it."""
+    for p in sorted(VAULT.iterdir()) if VAULT.is_dir() else []:
+        if p.is_dir() and p.name.startswith(prefix):
+            return p
+    return VAULT / fallback
+
+
+INBOX = folder("00-", "00-inbox")
+FAIL_NOTE = INBOX / "!Review failed.md"
+OVERDUE_NOTE = INBOX / "!Review overdue.md"
+SET_ASIDE_DIR = INBOX / ".set-aside"
+SET_ASIDE_NOTE = INBOX / "Set aside.md"
+NEVER_TOUCH = {"Inbox rule.md", "CLAUDE.md", "index.md", SET_ASIDE_NOTE.name}
+
+
+def load_config():
+    cfg = dict(DEFAULTS)
+    try:
+        cfg.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def today():
+    return dt.date.today()
+
+
+def log_path(day=None):
+    return LOGS / f"autoreview-{(day or today()).isoformat()}.log"
+
+
+def say(text):
+    """One line into today's log (and onto the screen when run by hand)."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    line = f"[{dt.datetime.now():%H:%M:%S}] {text}"
+    with open(log_path(), "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    if sys.stdout.isatty():
+        print(line)
+
+
+def defer(reason):
+    """Deferring is the normal case, not an event: it gets one line in its own
+    file, so the log of a real run does not drown in "not now" lines — and so
+    a review that has not happened for days can be explained afterwards."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    lines = []
+    if DEFERRED.exists():
+        lines = DEFERRED.read_text(encoding="utf-8", errors="replace").splitlines()[-199:]
+    lines.append(f"{dt.datetime.now():%Y-%m-%d %H:%M} deferred: {reason}")
+    DEFERRED.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return 0
+
+
+def last_success():
+    try:
+        return dt.date.fromisoformat(STAMP.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def days_since(day):
+    return 999 if day is None else (today() - day).days
+
+
+def is_due(on, last, weekday):
+    """Once a week, aiming at `weekday`, without the rhythm drifting.
+
+    Due on the aimed-for day and the two after it, if the last success is at
+    least five days old; due on any day once it is eight days old (a missed
+    week is caught up as soon as possible, not a week later)."""
+    days = 999 if last is None else (on - last).days
+    near = (on.isoweekday() - weekday) % 7 <= 2
+    return (near and days >= 5) or days >= 8
+
+
+def git(*args, check=False):
+    return subprocess.run(["git", "-C", str(VAULT), *args], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", check=check)
+
+
+def git_dirty():
+    r = git("status", "--porcelain")
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def git_head():
+    r = git("rev-parse", "HEAD")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def commit_all(message):
+    git("add", "-A")
+    r = git("commit", "-q", "-m", message)
+    if r.returncode and "nothing to commit" not in (r.stdout + r.stderr):
+        say(f"commit failed: {(r.stderr or r.stdout).strip()[:200]}")
+        return False
+    return True
+
+
+def vault_is_its_own_repo():
+    """Committing must never reach a repository the vault merely lives inside
+    (a vault in a synced project folder): `git add -A` there would commit
+    someone's whole project."""
+    r = git("rev-parse", "--show-toplevel")
+    if r.returncode:
+        return False
+    try:
+        return Path(r.stdout.strip()).resolve() == VAULT.resolve()
+    except OSError:
+        return False
+
+
+def vault_mode():
+    try:
+        m = re.search(r"Vault mode:\s*\**\s*([a-z]+)", (VAULT / "CLAUDE.md").read_text(encoding="utf-8"))
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
+# ------------------------------------------------------------- the machine
+def idle_seconds():
+    """Seconds since the last keyboard or mouse input, or None if unknown.
+
+    AUTOREVIEW_IDLE_SECONDS replaces the probe — for the self-check, which
+    must not depend on whether someone happens to be typing (or whether a
+    CI runner has a keyboard at all)."""
+    forced = os.environ.get("AUTOREVIEW_IDLE_SECONDS")
+    if forced is not None:
+        return int(forced) if forced.isdigit() else None
+    if sys.platform == "darwin":
+        for ioreg in ("/usr/sbin/ioreg", shutil.which("ioreg")):
+            if ioreg and os.path.exists(ioreg):
+                out = subprocess.run([ioreg, "-c", "IOHIDSystem"], capture_output=True, text=True).stdout
+                m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
+                if m:
+                    return int(m.group(1)) // 1_000_000_000
+        return None
+    if os.name == "nt":
+        import ctypes
+
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return (ctypes.windll.kernel32.GetTickCount() - info.dwTime) // 1000
+        return None
+    probe = shutil.which("xprintidle")
+    if probe:
+        out = subprocess.run([probe], capture_output=True, text=True).stdout.strip()
+        if out.isdigit():
+            return int(out) // 1000
+    return None
+
+
+def pid_alive(pid):
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        # os.kill(pid, 0) is NOT a probe on Windows: signal 0 is CTRL_C_EVENT.
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return code.value == 259     # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def network_ok():
+    try:
+        urllib.request.urlopen("https://api.anthropic.com/", timeout=10)
+        return True
+    except urllib.error.HTTPError:
+        return True              # any answer at all means the network is there
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def keep_awake_prefix():
+    if sys.platform == "darwin" and shutil.which("caffeinate"):
+        return ["caffeinate", "-i", "-m", "-s"]
+    if sys.platform.startswith("linux") and shutil.which("systemd-inhibit"):
+        return ["systemd-inhibit", "--what=sleep:idle", "--who=brainwarden",
+                "--why=weekly review", "--mode=block"]
+    return []
+
+
+def windows_keep_awake(on):
+    if os.name != "nt":
+        return
+    import ctypes
+    flags = 0x80000000 | (0x00000001 if on else 0)    # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    ctypes.windll.kernel32.SetThreadExecutionState(flags)
+
+
+def notify(title, text):
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["osascript", "-e", f'display notification "{text}" with title "{title}"'],
+                           capture_output=True, timeout=10)
+        elif shutil.which("notify-send"):
+            subprocess.run(["notify-send", title, text], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def claude_cmd(cfg):
+    cmd = cfg.get("claude_cmd")
+    if isinstance(cmd, str):
+        cmd = [cmd]
+    if cmd:
+        return cmd
+    found = shutil.which("claude")
+    return [found] if found else None
+
+
+# --------------------------------------------------------------- set-aside
+def load_terms():
+    try:
+        text = TERMS_FILE.read_text(encoding="utf-8")
+    except OSError:
+        text = DEFAULT_TERMS
+    hard, soft = [], []
+    for line in text.splitlines():
+        t = line.strip().lower()
+        if not t or t.startswith("#"):
+            continue
+        (hard if t.startswith("!") else soft).append(t.lstrip("!").strip())
+    return hard, soft
+
+
+def pattern(term):
+    """Word boundary in front always, behind only for terms ending in a word
+    character: without it `kali` matches every `Kalibrierung`; with a rigid
+    one `cve-` would never match. A filter with false alarms gets switched
+    off, and then it protects nothing."""
+    tail = r"(?!\w)" if term[-1].isalnum() else ""
+    return rf"(?<!\w){re.escape(term)}{tail}"
+
+
+def risky(path, terms):
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError as e:
+        # Unreadable used to count as harmless. Exactly backwards: the
+        # unchecked case is the one this exists for.
+        return True, [f"unreadable ({e.__class__.__name__})"]
+    hard, soft = terms
+    hits_hard = [t for t in hard if re.search(pattern(t), text)]
+    hits_soft = [t for t in soft if re.search(pattern(t), text)]
+    return bool(hits_hard) or len(hits_soft) >= 2, hits_hard + hits_soft
+
+
+def write_set_aside_note(entries):
+    """The visible half. A filter that sorts out silently is worse than none —
+    notes would vanish and nobody would know."""
+    if not entries:
+        if SET_ASIDE_NOTE.exists():
+            SET_ASIDE_NOTE.unlink()
+        return
+    lines = ["<!-- kit-page --><!-- written by autoreview.py: a notice, not a capture -->",
+             "# Set aside for the unattended review", "",
+             f"Updated {today().isoformat()}. These captures are in `00-inbox/.set-aside/`",
+             "(a hidden folder). The unattended review leaves them out on purpose: their",
+             "content can make the model's safeguards abort the whole run.", "",
+             "**To do:** file them in a normal chat, where they cause no trouble. Say:",
+             "*\"file the set-aside captures\"* — or bring them back first with",
+             "`python3 .tools/autoreview.py set-aside --restore`.", ""]
+    lines += [f"- `{name}` — matched: {', '.join(sorted(set(hits))[:6])}" for name, hits in entries]
+    SET_ASIDE_NOTE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+SCAN_SKIP = {".git", ".obsidian", ".tools", ".trash", "_templates"}
+
+
+def scan_exclusions(terms):
+    """Risky notes OUTSIDE the inbox are never moved — a decision record is
+    untouchable and a project note belongs where it is. The review is only
+    told not to open them."""
+    found = []
+    for p in sorted(VAULT.rglob("*.md")):
+        rel = p.relative_to(VAULT)
+        top = rel.parts[0]
+        if top in SCAN_SKIP or top.startswith((".", "00-", "90-")) or len(rel.parts) == 1:
+            continue
+        if risky(p, terms)[0]:
+            found.append(rel.as_posix())
+    return found
+
+
+def vault_exclusions(terms):
+    found = scan_exclusions(terms)
+    if found:
+        EXCLUDE_LIST.write_text("# Leave these out of the unattended review (written by autoreview.py).\n"
+                                "# Their content can abort the run. Do not open them; name them in the report.\n"
+                                + "\n".join(found) + "\n", encoding="utf-8")
+    elif EXCLUDE_LIST.exists():
+        EXCLUDE_LIST.unlink()
+    return found
+
+
+def set_aside(check=False):
+    """Move risky inbox notes out of the way; return the vault-wide exclusions."""
+    terms = load_terms()
+    new = []
+    for p in sorted(INBOX.glob("*.md")) if INBOX.is_dir() else []:
+        if p.name in NEVER_TOUCH or p.name.startswith("!"):
+            continue
+        bad, hits = risky(p, terms)
+        if bad:
+            new.append((p.name, hits))
+    earlier = [(p.name, risky(p, terms)[1] or ["set aside earlier"])
+               for p in sorted(SET_ASIDE_DIR.glob("*.md"))] if SET_ASIDE_DIR.is_dir() else []
+    if check:
+        for name, hits in new:
+            print(f"would set aside: {name} ({', '.join(sorted(set(hits))[:6])})")
+        for name, _ in earlier:
+            print(f"already set aside: {name}")
+        found = scan_exclusions(terms)
+        for rel in found:
+            print(f"would leave out (stays where it is): {rel}")
+        if not (new or earlier or found):
+            print("nothing to set aside")
+        return found
+    excluded = vault_exclusions(terms)
+    if not new:
+        write_set_aside_note(earlier)
+        return excluded
+    SET_ASIDE_DIR.mkdir(exist_ok=True)
+    # The notice is written BEFORE anything moves. Runs abort — that is the
+    # whole premise — and a note moved into a hidden folder that nothing
+    # names is a note lost. A notice naming one file too many is harmless.
+    write_set_aside_note(earlier + new)
+    for name, _ in new:
+        target = SET_ASIDE_DIR / name
+        if target.exists():
+            # A second dictation of the same thought on the same day gets the
+            # same name, and a plain move would overwrite the first.
+            target = SET_ASIDE_DIR / f"{target.stem}--{dt.datetime.now():%H%M%S}{target.suffix}"
+        shutil.move(str(INBOX / name), str(target))
+        say(f"set aside: {name}")
+    return excluded
+
+
+def restore():
+    if not SET_ASIDE_DIR.is_dir():
+        print("nothing set aside")
+        return 0
+    moved = 0
+    for p in sorted(SET_ASIDE_DIR.glob("*.md")):
+        target = INBOX / p.name
+        if target.exists():
+            print(f"skipped (a file of that name is in the inbox): {p.name}")
+            continue
+        shutil.move(str(p), str(target))
+        print(f"back in the inbox: {p.name}")
+        moved += 1
+    rest = sorted(p.name for p in SET_ASIDE_DIR.iterdir())
+    if rest:
+        # Never delete the notice while files remain: the folder is hidden in
+        # Obsidian and skipped by every tool, so the notice is all that names them.
+        write_set_aside_note([(n, ["could not be brought back"]) for n in rest])
+        print(f"still set aside ({len(rest)}): {', '.join(rest)} — listed in {SET_ASIDE_NOTE.name}")
+    else:
+        SET_ASIDE_DIR.rmdir()
+        write_set_aside_note([])
+    print(f"{moved} brought back")
+    return 0
+
+
+# ---------------------------------------------------------------- watchdog
+def watchdog(cfg, quiet=False):
+    last = last_success()
+    days = days_since(last)
+    if days <= cfg["patience_days"]:
+        if OVERDUE_NOTE.exists():
+            OVERDUE_NOTE.unlink()
+        return False
+    first_time = not OVERDUE_NOTE.exists()
+    since = "has never succeeded" if last is None else f"last succeeded on {last.isoformat()} ({days} days ago)"
+    waiting = len([p for p in INBOX.glob("*.md")
+                   if not p.name.startswith("!") and p.name not in NEVER_TOUCH]) if INBOX.is_dir() else 0
+    INBOX.mkdir(parents=True, exist_ok=True)
+    OVERDUE_NOTE.write_text(f"""<!-- kit-page --><!-- written by autoreview.py: a watchdog notice, not a capture -->
+# The weekly review is overdue
+
+The unattended review {since}. Files in the inbox right now: {waiting}.
+
+The scheduler checks every twenty minutes whether a review is due and the
+computer is in use. Why it has not run is usually one of: the computer was
+closed for days, runs were aborted, or the scheduled job is no longer loaded.
+The reasons for every skipped tick are in `.tools/logs/deferred.log`.
+
+**Catch up — either way works:**
+- by hand: `python3 .tools/autoreview.py run --now` (Windows: `py -3`)
+- or in a chat: *"brain review"* — interactive, with the questions only you can answer
+
+**Check the schedule:** `python3 .tools/autoreview.py status`
+
+This note disappears by itself after the next successful review.
+""", encoding="utf-8")
+    if first_time and not quiet:
+        notify("Brain review", "The weekly review is overdue - a note is in the inbox.")
+    return True
+
+
+# --------------------------------------------------------------------- run
+def build_prompt(excluded):
+    task = ("Run the weekly brain review now, following the brain-review skill in its "
+            "\"Autonomous mode\" — nobody is watching, the person only reads the result. "
+            f"Vault: {VAULT}. Skip the inbox notices `!Review failed.md`, `!Review overdue.md` "
+            f"and `{SET_ASIDE_NOTE.name}` and the hidden folder `.set-aside/` — they are not captures.")
+    if excluded:
+        task += (" Do NOT open or quote these files; only name them in the report as skipped: "
+                 + ", ".join(excluded) + ".")
+    return task
+
+
+def run_claude(cmd, prompt, cfg):
+    full = keep_awake_prefix() + cmd + ["-p", prompt, "--model", cfg["model"],
+                                       "--permission-mode", "acceptEdits",
+                                       "--allowedTools", *ALLOWED_TOOLS]
+    windows_keep_awake(True)
+    start = time.time()
+    try:
+        with open(log_path(), "a", encoding="utf-8") as fh:
+            r = subprocess.run(full, cwd=str(VAULT), stdout=fh, stderr=subprocess.STDOUT,
+                               timeout=cfg["max_run_s"] * 2)
+        status = r.returncode
+    except subprocess.TimeoutExpired:
+        say("the run hung and was stopped")
+        status = 124
+    except OSError as e:
+        say(f"could not start claude: {e}")
+        status = 127
+    finally:
+        windows_keep_awake(False)
+    return status, int(time.time() - start)
+
+
+def flagged_since(offset):
+    """Was THIS run stopped by the safeguards? Only the part of today's log
+    written since the run started counts — an earlier run's abort must not
+    turn a later network error into the wrong diagnosis."""
+    try:
+        with open(log_path(), encoding="utf-8", errors="replace") as fh:
+            fh.seek(offset)
+            return SAFEGUARD_MARK in fh.read().lower()
+    except OSError:
+        return False
+
+
+def log_offset():
+    try:
+        return log_path().stat().st_size
+    except OSError:
+        return 0
+
+
+def write_fail_note(reason, todo):
+    tail = ""
+    try:
+        tail = "\n".join(log_path().read_text(encoding="utf-8", errors="replace").splitlines()[-12:])
+    except OSError:
+        pass
+    INBOX.mkdir(parents=True, exist_ok=True)
+    FAIL_NOTE.write_text(f"""<!-- kit-page --><!-- written by autoreview.py: a failure notice, not a capture -->
+# The unattended weekly review did not finish
+
+**When:** {dt.datetime.now():%Y-%m-%d %H:%M}
+
+**What happened:** {reason}
+
+**What to do:** {todo}
+
+Everything done until the abort is committed; nothing is lost. What was
+left is still in the inbox. This note disappears after the next successful run.
+
+Last lines of the log (`.tools/logs/{log_path().name}`):
+
+```
+{tail}
+```
+""", encoding="utf-8")
+
+
+def prune_logs(keep=12):
+    logs = sorted(LOGS.glob("autoreview-*.log"))
+    for old in logs[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+def cmd_run(now=False):
+    cfg = load_config()
+    LOGS.mkdir(parents=True, exist_ok=True)
+
+    # (a) one at a time — a hand-started run can overlap a scheduled one
+    if LOCK.exists():
+        try:
+            pid = int(LOCK.read_text().strip() or 0)
+        except ValueError:
+            pid = 0
+        if pid_alive(pid):
+            return defer(f"a review is already running (pid {pid})")
+        LOCK.unlink()        # orphaned by an aborted run: clear it, never block on it
+
+    watchdog(cfg)
+
+    # (b) is it due at all?
+    last = last_success()
+    if not now and not is_due(today(), last, cfg["weekday"]):
+        return 0
+    # (c) quiet hours: a review at 4 a.m. helps nobody and can wait
+    hour = dt.datetime.now().hour
+    if not now and (hour >= cfg["quiet_from"] or hour < cfg["quiet_until"]):
+        return defer(f"quiet hours ({hour}:00)")
+    # (d) is anyone actually using the machine? (lesson 2)
+    idle = None
+    if not now:
+        idle = idle_seconds()
+        if idle is None and sys.platform == "darwin":
+            return defer("cannot tell whether the computer is in use (ioreg gave nothing)")
+        if idle is not None and idle > cfg["idle_limit_s"]:
+            return defer(f"computer not in use (no input for {idle}s)")
+    # (e) network — cheap, and spares a run that is certain to fail
+    if cfg.get("net_check", True) and not network_ok():
+        return defer("api.anthropic.com not reachable")
+    cmd = claude_cmd(cfg)
+    if not cmd:
+        return defer("claude not found — run `autoreview.py install` again so it records the full path")
+    if not vault_is_its_own_repo():
+        write_fail_note("The vault is not its own Git repository (or it sits inside another one). "
+                        "Unattended edits are only safe with the vault's own history to undo them.",
+                        "Run `git init` inside the vault, or move it out of the surrounding repository.")
+        return 2
+
+    LOCK.write_text(str(os.getpid()))
+    try:
+        return _run_locked(cfg, cmd, days_since(last), idle)
+    finally:
+        try:
+            LOCK.unlink()
+        except OSError:
+            pass
+
+
+def _run_locked(cfg, cmd, days, idle):
+    stamp = today().isoformat()
+    say(f"start — last success {days} days ago" + (f", idle {idle}s" if idle is not None else ""))
+    # Step 0: whatever the week left uncommitted goes into its own commit, so
+    # it is unambiguous what THIS run did — and undo never touches it.
+    if git_dirty():
+        commit_all(f"Starting point before the weekly run of {stamp}")
+        say("starting point committed")
+    base = git_head()
+    # Step 1: set aside what would abort the run (lesson 1)
+    excluded = set_aside()
+    if git_dirty():
+        commit_all(f"Weekly run {stamp}: notes set aside before it started")
+    # Step 2: the run, and at most one retry for a plain failure
+    prompt = build_prompt(excluded)
+    offset = log_offset()
+    say("review starts")
+    status, took = run_claude(cmd, prompt, cfg)
+    flagged = flagged_since(offset)
+    slept = False
+    if status and not flagged:
+        now_idle = idle_seconds()
+        slept = took > cfg["max_run_s"] or (now_idle is not None and now_idle > cfg["idle_limit_s"])
+    if status and not flagged and not slept:
+        say(f"failed (status {status} after {took}s, no safeguard abort) — one more try")
+        time.sleep(RETRY_WAIT)
+        offset = log_offset()
+        status, took = run_claude(cmd, prompt, cfg)
+        flagged = flagged_since(offset)
+        slept = bool(status) and not flagged and took > cfg["max_run_s"]
+    if status == 0:
+        STAMP.write_text(stamp + "\n", encoding="utf-8")
+        for note in (FAIL_NOTE, OVERDUE_NOTE):
+            if note.exists():
+                note.unlink()
+        say(f"done ({took}s)")
+    prune_logs()
+    # Step 3: partial work is committed whatever happened (lesson 1)
+    if git_dirty():
+        # Only a success says "Review": search.py --stats counts review days
+        # from these messages, and a failed run is not a review that happened.
+        commit_all(f"Review {stamp}: follow-up (run log)" if status == 0
+                   else f"Weekly run {stamp}: partial work saved after an abort")
+    LAST_RUN.write_text(json.dumps({"date": stamp, "base": base, "head": git_head(),
+                                    "status": status, "undone": False}, indent=1) + "\n",
+                        encoding="utf-8")
+    # Step 4: make the result visible
+    if status == 0:
+        notify("Brain review", "Weekly review done - the result is in Home.")
+        return 0
+    if slept:
+        say(f"interrupted after {took}s — the computer went to sleep. Not an error; caught up next time.")
+        return defer(f"run interrupted by sleep ({took}s, status {status})")
+    if flagged:
+        reason = ("The model's safeguards stopped the run. So a note in the vault still has content "
+                  "that triggers them, and the set-aside list does not know its words yet.")
+        todo = ("Say in a normal chat: *\"the unattended review was stopped by the safeguards — find the "
+                "note and add its words to .tools/set-aside-terms.txt\"*. The log below usually shows how far it got.")
+    else:
+        reason = (f"The run ended with status {status} after {took}s — no safeguard abort, and the "
+                  "computer was awake. So more likely network, login, or a step that went wrong.")
+        todo = (f"Read the log `.tools/logs/{log_path().name}`, then catch up by hand: "
+                "`python3 .tools/autoreview.py run --now`.")
+    say("failed — notice in the inbox")
+    write_fail_note(reason, todo)
+    commit_all(f"Weekly run {stamp} failed — notice in the inbox")
+    _update_last_run_head()
+    notify("Brain review", "The review failed - a notice is in the inbox.")
+    return status
+
+
+def _update_last_run_head():
+    try:
+        data = json.loads(LAST_RUN.read_text(encoding="utf-8"))
+        data["head"] = git_head()
+        LAST_RUN.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
+# -------------------------------------------------------------------- undo
+def cmd_undo():
+    try:
+        data = json.loads(LAST_RUN.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("no unattended review on record — nothing to undo")
+        return 1
+    if data.get("undone"):
+        print(f"the review of {data['date']} was already undone")
+        return 1
+    base, head = data.get("base"), data.get("head")
+    if not base or not head or base == head:
+        print(f"the review of {data.get('date')} committed nothing — nothing to undo")
+        return 1
+    if git_dirty():
+        print("there are uncommitted changes in the vault — commit them first, so undo cannot mix them in")
+        return 1
+    if git_head() != head:
+        later = git("log", "--oneline", f"{head}..HEAD").stdout.strip()
+        print(f"you have committed since the review of {data['date']}:\n{later}\n"
+              f"Undo would leave those alone but could conflict. To do it anyway by hand:\n"
+              f"  git -C \"{VAULT}\" revert --no-edit {base}..{head}")
+        return 1
+    commits = git("rev-list", "--count", f"{base}..{head}").stdout.strip()
+    r = git("revert", "--no-edit", f"{base}..{head}")
+    if r.returncode:
+        git("revert", "--abort")
+        print("git could not revert cleanly — nothing was changed.\n" + (r.stderr or r.stdout).strip()[:400])
+        return 1
+    data["undone"] = True
+    LAST_RUN.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    print(f"undone: the review of {data['date']} ({commits} commits reverted; history kept, "
+          f"so this undo can itself be undone with git)")
+    return 0
+
+
+# ----------------------------------------------------------------- status
+def scheduler_id():
+    return hashlib.sha1(str(VAULT.resolve()).encode("utf-8")).hexdigest()[:8]
+
+
+def cmd_status():
+    cfg = load_config()
+    last = last_success()
+    print(f"vault:            {VAULT}")
+    print(f"last success:     {last.isoformat() + f' ({days_since(last)} days ago)' if last else 'never'}")
+    print(f"due now:          {'yes' if is_due(today(), last, cfg['weekday']) else 'no'}"
+          f"  (aims for ISO weekday {cfg['weekday']})")
+    print(f"overdue notice:   {'yes' if OVERDUE_NOTE.exists() else 'no'}")
+    print(f"failure notice:   {'yes' if FAIL_NOTE.exists() else 'no'}")
+    aside = len(list(SET_ASIDE_DIR.glob('*.md'))) if SET_ASIDE_DIR.is_dir() else 0
+    print(f"set aside:        {aside}")
+    print(f"claude:           {' '.join(claude_cmd(cfg) or ['NOT FOUND'])}")
+    if DEFERRED.exists():
+        tail = DEFERRED.read_text(encoding="utf-8", errors="replace").splitlines()[-3:]
+        print("last deferrals:   " + ("\n                  ".join(tail) if tail else "-"))
+    return 0
+
+
+# --------------------------------------------------------- install / remove
+def plan_install(platform, python, script):
+    """What `install` writes and runs, per OS — returned, not executed, so the
+    dry run and the self-check can show it without touching the machine."""
+    sid = scheduler_id()
+    home = Path.home()
+    if platform == "mac":
+        label = f"com.brainwarden.autoreview.{sid}"
+        plist = home / "Library" / "LaunchAgents" / f"{label}.plist"
+        cfg = load_config()
+        cmd = claude_cmd(cfg) or ["claude"]
+        path = os.pathsep.join(dict.fromkeys([str(Path(cmd[0]).parent), str(home / ".local" / "bin"),
+                                              "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                                              "/usr/sbin", "/sbin"]))
+        body = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key>
+  <array><string>{python}</string><string>{script}</string><string>run</string></array>
+  <key>StartInterval</key><integer>1200</integer>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>{path}</string></dict>
+  <key>StandardOutPath</key><string>{LOGS / 'scheduler.log'}</string>
+  <key>StandardErrorPath</key><string>{LOGS / 'scheduler.log'}</string>
+</dict>
+</plist>
+"""
+        uid = os.getuid() if hasattr(os, "getuid") else 501
+        return {"files": {plist: body},
+                "commands": [["launchctl", "bootout", f"gui/{uid}", str(plist)],
+                             ["launchctl", "bootstrap", f"gui/{uid}", str(plist)]],
+                "remove_files": [plist],
+                "remove_commands": [["launchctl", "bootout", f"gui/{uid}", str(plist)]],
+                "ignore_errors": [0]}
+    if platform == "windows":
+        name = f"Brainwarden autoreview {sid}"
+        pyw = str(Path(python).with_name("pythonw.exe")) if Path(python).with_name("pythonw.exe").exists() else python
+        return {"files": {},
+                "commands": [["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "20", "/TN", name,
+                              "/TR", f'"{pyw}" "{script}" run']],
+                "remove_files": [],
+                "remove_commands": [["schtasks", "/Delete", "/F", "/TN", name]],
+                "ignore_errors": []}
+    unit = f"brainwarden-autoreview-{sid}"
+    base = home / ".config" / "systemd" / "user"
+    service = f"""[Unit]
+Description=Brainwarden weekly review tick ({VAULT})
+
+[Service]
+Type=oneshot
+ExecStart="{python}" "{script}" run
+"""
+    timer = """[Unit]
+Description=Brainwarden weekly review tick every 20 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=20min
+
+[Install]
+WantedBy=timers.target
+"""
+    return {"files": {base / f"{unit}.service": service, base / f"{unit}.timer": timer},
+            "commands": [["systemctl", "--user", "daemon-reload"],
+                         ["systemctl", "--user", "enable", "--now", f"{unit}.timer"]],
+            "remove_files": [base / f"{unit}.service", base / f"{unit}.timer"],
+            "remove_commands": [["systemctl", "--user", "disable", "--now", f"{unit}.timer"]],
+            "ignore_errors": []}
+
+
+def stable_python():
+    """The interpreter the scheduler should call. On macOS sys.executable is
+    the resolved binary inside Xcode or the Command Line Tools — a path that
+    an Xcode update moves. /usr/bin/python3 is the shim that stays."""
+    exe = sys.executable
+    if sys.platform == "darwin" and exe.startswith(("/Applications/Xcode", "/Library/Developer/CommandLineTools")) \
+            and os.path.exists("/usr/bin/python3"):
+        return "/usr/bin/python3"
+    return exe
+
+
+def this_platform():
+    return "mac" if sys.platform == "darwin" else "windows" if os.name == "nt" else "linux"
+
+
+def cmd_install(a):
+    if vault_mode() == "company" and not a.force:
+        print("This is a company vault: several people share it, and unattended edits on one "
+              "machine land in everyone's copy. That should be a decision, not a default.\n"
+              "If it is decided: run install again with --force.")
+        return 1
+    cfg = load_config()
+    if a.weekday:
+        cfg["weekday"] = a.weekday
+    if a.model:
+        cfg["model"] = a.model
+    if not cfg.get("claude_cmd"):
+        found = shutil.which("claude")
+        if not found and not a.dry_run:
+            print("claude was not found on PATH. Scheduled jobs do not know your PATH, so the full "
+                  "path is recorded here — install Claude Code first, then run this again.")
+            return 1
+        cfg["claude_cmd"] = [found or "claude"]
+    platform = a.platform or this_platform()
+    plan = plan_install(platform, stable_python(), str(Path(__file__).resolve()))
+    if a.dry_run:
+        print(f"would write {CONFIG.relative_to(VAULT).as_posix()}: {json.dumps(cfg)}")
+        for path, body in plan["files"].items():
+            print(f"would write {path}:\n{body}")
+        for c in plan["commands"]:
+            print("would run: " + " ".join(c))
+        return 0
+    CONFIG.write_text(json.dumps(cfg, indent=1) + "\n", encoding="utf-8")
+    if not TERMS_FILE.exists():
+        TERMS_FILE.write_text(DEFAULT_TERMS, encoding="utf-8")
+    LOGS.mkdir(parents=True, exist_ok=True)
+    if last_success() is None:
+        # Without this the very first tick finds "never succeeded" and starts
+        # a full review minutes after installing — on the person's usage.
+        STAMP.write_text(today().isoformat() + "\n", encoding="utf-8")
+    # Its own two files get their own commit — otherwise the first run would
+    # commit them as "the week's starting point". Only these paths, never -A:
+    # whatever else is uncommitted belongs to the person. (No "review" in the
+    # message: search.py --stats counts review days from those words.)
+    if vault_is_its_own_repo():
+        mine = [str(CONFIG.relative_to(VAULT)), str(TERMS_FILE.relative_to(VAULT))]
+        git("add", "--", *mine)
+        git("commit", "-q", "-m", "Unattended weekly runs scheduled", "--", *mine)
+    for path, body in plan["files"].items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    for i, c in enumerate(plan["commands"]):
+        r = subprocess.run(c, capture_output=True, text=True)
+        if r.returncode and i not in plan["ignore_errors"]:
+            print(f"failed: {' '.join(c)}\n{(r.stderr or r.stdout).strip()}")
+            return 1
+    print(f"scheduled: a check every 20 minutes; the review itself runs once a week "
+          f"(aiming for ISO weekday {cfg['weekday']}) when the computer is in use.\n"
+          f"status: python3 .tools/autoreview.py status · remove: python3 .tools/autoreview.py uninstall")
+    return 0
+
+
+def cmd_uninstall(a):
+    plan = plan_install(a.platform or this_platform(), stable_python(), str(Path(__file__).resolve()))
+    if a.dry_run:
+        for c in plan["remove_commands"]:
+            print("would run: " + " ".join(c))
+        for p in plan["remove_files"]:
+            print(f"would remove {p}")
+        return 0
+    for c in plan["remove_commands"]:
+        subprocess.run(c, capture_output=True, text=True)
+    for p in plan["remove_files"]:
+        if p.exists():
+            p.unlink()
+    print("unscheduled. The vault, its history and the logs are untouched.")
+    return 0
+
+
+# -------------------------------------------------------------------- main
+def main():
+    utf8_stdout()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("--now", action="store_true", help="by hand: skip the due, quiet-hours and in-use gates")
+    sub.add_parser("status")
+    sub.add_parser("undo")
+    s = sub.add_parser("set-aside")
+    s.add_argument("--check", action="store_true")
+    s.add_argument("--restore", action="store_true")
+    for name in ("install", "uninstall"):
+        p = sub.add_parser(name)
+        p.add_argument("--dry-run", action="store_true")
+        p.add_argument("--platform", choices=["mac", "windows", "linux"], help=argparse.SUPPRESS)
+        if name == "install":
+            p.add_argument("--weekday", type=int, choices=range(1, 8))
+            p.add_argument("--model")
+            p.add_argument("--force", action="store_true")
+    a = ap.parse_args()
+    if a.cmd == "run":
+        return cmd_run(a.now)
+    if a.cmd == "status":
+        return cmd_status()
+    if a.cmd == "undo":
+        return cmd_undo()
+    if a.cmd == "set-aside":
+        if a.restore:
+            return restore()
+        set_aside(check=a.check)
+        return 0
+    if a.cmd == "install":
+        return cmd_install(a)
+    return cmd_uninstall(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

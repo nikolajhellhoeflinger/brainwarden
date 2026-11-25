@@ -18,6 +18,16 @@ or deleted, never "kept for later".
 * [Inbox rule.md](Inbox%20rule.md) - how capturing works, for the human
 * [raw/README.md](raw/README.md) - drop zone for PDFs, transcripts, articles → skill `brain-ingest`
 
+## Files that are NOT captures
+The review files everything here except these. They are notices, and they
+stand exactly where everyone looks, on purpose:
+* `!Review failed.md` / `!Review overdue.md` — the unattended weekly review
+  (`.tools/autoreview.py`) could not finish, or has not run for too long.
+  They disappear by themselves after the next successful run.
+* `Set aside.md` and the hidden folder `.set-aside/` — captures the runner
+  kept out of an unattended run because their content can abort it. Filed
+  by hand in a normal chat.
+
 <!--
 With content this folder is a flat pile of dated capture files and no
 more entry points than the two above — that is the intended end state.

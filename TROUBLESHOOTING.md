@@ -186,10 +186,32 @@ it's opt-in, and you should know the trade-offs first:
 Two ways to set it up: the easiest is **Claude Code Desktop → Routines**
 (same on macOS/Windows/Linux: New routine → Local → your `~/Brain` →
 instructions "run the brain-review skill on this vault" → Weekly).
-Terminal users can instead ask Claude — *"set up an automatic weekly
-brain review"* — and it writes the scheduler job for your OS (launchd /
-cron / Task Scheduler, with the full path to `claude` — scheduled tasks
-don't know your PATH).
+Terminal users get the hardened version: ask Claude — *"set up an
+automatic weekly brain review"* — and it runs
+`python3 .tools/autoreview.py install` (Windows: `py -3`). That schedules a
+check every 20 minutes (launchd / Task Scheduler / systemd), and the review
+itself runs once a week. What the runner adds over a plain scheduled job,
+each one the answer to a run that really failed:
+- **It only starts when you are at the computer.** A fixed "Friday 16:00"
+  hits a closed laptop, the scheduler catches up during a 45-second
+  maintenance wake, and the run dies mid-sentence. So it waits until the
+  machine is in use, keeps it awake while it runs, and a run your laptop
+  slept through is simply caught up later — not reported as an error.
+- **Commits before and after.** Your week's captures get their own commit
+  first, partial work is committed even when the run aborts.
+- **`python3 .tools/autoreview.py undo`** takes back exactly what the last
+  unattended review committed (as `git revert`, so history stays), never
+  the captures that were there before.
+- **Failures are a file, not a pop-up.** `!Review failed.md` in the inbox
+  says what happened and what to do; `!Review overdue.md` appears when no
+  run has succeeded for 10 days. Both disappear after the next success.
+- **Notes that would abort it are set aside, never lost.** A note dense
+  with, say, offensive-security tool names can make the model's
+  safeguards stop the whole headless run. Such captures move to
+  `00-inbox/.set-aside/` and are listed in `Set aside.md`; the word list is
+  `.tools/set-aside-terms.txt`, and `set-aside --restore` brings them back.
+- **`status`** says when it last ran and why not since. `uninstall`
+  removes the schedule and nothing else.
 
 ## Company brains
 

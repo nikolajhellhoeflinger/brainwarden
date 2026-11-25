@@ -18,7 +18,8 @@ the global rules name it).
    red line) and `<vault>/index.md` if present. No `CLAUDE.md` → wrong path or unfinished setup: say
    so and stop.
 1. **Inbox to ZERO** (hard rule): process every file DIRECTLY in `<vault>/00-inbox/` — never the
-   kit's `Inbox rule.md`, `index.md`, `CLAUDE.md`, never `raw/` (`brain-ingest`'s queue). One file
+   kit's `Inbox rule.md`, `index.md`, `CLAUDE.md`, never `raw/` (`brain-ingest`'s queue), never a
+   notice the unattended runner left (`!`-prefixed files, `Set aside.md`, the hidden `.set-aside/`). One file
    may take SEVERAL exits (a decision + two dates + a question = four).
    - **(a) a note:** paraphrase it (frontmatter, vault language, matching `_templates/` file, real
      values for placeholders); file by ACTIONABILITY: project → `10-projects/` · area → `20-areas/`

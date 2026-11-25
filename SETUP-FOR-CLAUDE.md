@@ -1249,7 +1249,9 @@ or change the language — the structure grows with you." Optional extra to
 mention (don't set it up unasked): "I can also schedule the weekly review
 to run itself — ask me any time; it writes what it did to
 `<vault>/.tools/logs/auto-review-YYYY-MM-DD.md`, and the auto-review
-entry in TROUBLESHOOTING.md has the usage-cost trade-offs first."
+entry in TROUBLESHOOTING.md has the usage-cost trade-offs first." If
+they say yes later: `python3 <vault>/.tools/autoreview.py install` (it
+refuses a company vault unless the person confirms with `--force`).
 
 ## Updating a vault built with an older kit version
 

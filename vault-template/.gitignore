@@ -4,3 +4,12 @@ __pycache__/
 .DS_Store
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
+# autoreview.py: state of THIS machine, not of the brain. Kept out of the
+# history so `autoreview.py undo` never reverts it and a second computer
+# with the same vault keeps its own schedule.
+.tools/logs/.running
+.tools/logs/last-success
+.tools/logs/last-run.json
+.tools/logs/deferred.log
+.tools/logs/scheduler.log
+.tools/review-exclude.txt
