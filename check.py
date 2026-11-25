@@ -842,11 +842,27 @@ def check_people(tmp):
     put("20-areas/Old-Friend.md", "---\ntype: person\n---\n\n# Old Friend\n\nSchool friend.\n")
     # Max: close (many recent mentions), one weak link to tax. Old Friend: many mentions, all years ago.
     put(f"00-inbox/{day(-3)}-chess.md", "".join(f"Chess with Max Muster, game {i}.\n" for i in range(12))
-        + "Max Muster complained about his tax forms.\nAnna said hi.\n")
+        + "".join(f"Max Muster complained about his tax forms, part {i}.\n" for i in range(5)) + "Anna said hi.\n")
     put("90-archive/2019-05-01-reunion.md", "".join(f"Old Friend, story {i}.\n" for i in range(6)))
     put("10-projects/Shop.md", f"---\ntype: project\ncreated: 2020-01-01\n---\n\n# Shop\n\n### {day(-10)}\n"
         "Asked Jane Doe about the invoices.\n")
-    put("Deadlines.md", f"\n- {day(1)} Lunch with Jane Doe\n- {day(30)} Max Muster's birthday\n")
+    put("Deadlines.md", f"\n- {day(1)} Lunch with Jane Doe\n- {day(30)} Max Muster's birthday\n"
+        f"- {day(2)} Shop: parcel pickup with Coco\n")
+    # a group note: each bold entry with a dash is a person; bold attributes, companies
+    # and descriptions without a name are not. Its subject is [[Shop]], not [[Jane-Doe]] or "team".
+    put("30-knowledge/people/Shop-Team.md", "---\ntype: person\n---\n\n# Shop team\n\n"
+        "People around [[Shop]]; see also [[Jane-Doe]].\n\n"
+        "- **Ben Carter** – supplier contact, knows the customs paperwork.\n"
+        "- **Michael („Mick“) Stone** – runs the warehouse.\n"
+        "- **Hr. Brandt** – accountant for the shop.\n"
+        "- **Coco** – designs the labels.\n"
+        "- **Peter Alpha** – courier one.\n- **Peter Beta** – courier two.\n"
+        "- **Birthday:** not a person\n- **Acme GmbH** – supplier company\n"
+        "- **Ein Praktikant** – helps out, name unknown\n"
+        "- **Ben Carter** – also handles returns.\n")
+    put(f"00-inbox/{day(-2)}-shop-call.md", "Call about the Shop: Ben confirmed the forms. Peter brought the parcel. "
+        "Mick joined.\nBrandt sent the invoice.\n")
+    put(f"00-inbox/{day(-2)}-dinner.md", "Dinner with Ben and [[Jane-Doe]] after the team event.\n")
     home = os.path.join(vault, "Home.md")
     with open(home, "a", encoding="utf-8") as fh:
         fh.write(f"\n- Neu ({day(1)}): ask Max Muster about the chess club\n")
@@ -863,6 +879,36 @@ def check_people(tmp):
         return subprocess.run([sys.executable, script, *args], cwd=vault, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", env=dict(os.environ, **env_))
 
+    shop = pp("who", "customs").stdout
+    first = next((l for l in shop.splitlines() if l and not l.startswith(" ")), "")
+    if not first.startswith("Ben Carter — in 30-knowledge/people/Shop-Team.md"):
+        return bad(label, f"who answered with the group note, not the person in it: {shop[:200]!r}")
+    both = pp("who", "warehouse labels").stdout          # one quoted argument, two words
+    if "Michael Stone" not in both or "Coco" not in both:
+        return bad(label, f"two words in one argument were searched as one: {both[:200]!r}")
+    roster = pp("close", "--k", "40").stdout
+    for wrong in ("Birthday", "Acme GmbH", "Ein Praktikant", "Shop team"):
+        if wrong in roster:
+            return bad(label, f"{wrong!r} was taken for a person you are close to")
+    if roster.count("Ben Carter") != 1 or "Peter Alpha" not in roster:
+        return bad(label, f"group entries not listed once each: {roster[:400]!r}")
+    import importlib.util as _u
+    spec = _u.spec_from_file_location("people_mod", script)
+    mod = _u.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.VAULT = __import__("pathlib").Path(vault)
+    everyone = mod.people()
+    mod.collect(everyone)
+    by = {p.name: p for p in everyone}
+    where = lambda n: sorted(os.path.basename(str(m[1])) for m in by[n].mentions if "00-inbox" in str(m[1]))
+    if where("Ben Carter") != [f"{day(-2)}-shop-call.md"]:
+        return bad(label, f"a first name counted outside its group's subject (or not inside it): {where('Ben Carter')}")
+    if where("Peter Alpha") or where("Peter Beta"):
+        return bad(label, "an ambiguous first name was given to one of two people")
+    if where("Michael Stone") != [f"{day(-2)}-shop-call.md"] or "Coco" not in pp("upcoming", "--days", "3").stdout:
+        return bad(label, "a nickname or a first name in a dated line was not recognised")
+    if "accountant" not in pp("brief", "brandt").stdout or where("Hr. Brandt") != [f"{day(-2)}-shop-call.md"]:
+        return bad(label, "a titled name (Hr. Brandt) is not recognised by its surname")
     who = pp("who", "tax").stdout
     first = next((l for l in who.splitlines() if l and not l.startswith(" ")), "")
     if not first.startswith("Jane Doe") or "tax lawyer" not in who or "Anna Berger" in who:

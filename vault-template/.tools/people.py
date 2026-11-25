@@ -37,11 +37,17 @@ says nothing a note does not say. What goes INTO a person note stays the
 review's rule: facts you could show them if they asked.
 
 People are the notes in the people folder (`30-…/people/`, or its name in
-the vault's language) and every note with `type: person`. A person is
-recognised by the note's name, its title and its `aliases:` — whole words,
-umlauts folded like search.py. First names alone are not matched: in 300
-notes "Anna" is three different people. Add them as `aliases:` where they
-are unambiguous. Python standard library only.
+the vault's language) and every note with `type: person` — and every entry
+of a group note written as `- **Full Name** – role` (a team, a committee, a
+client's staff): measured on a real brain, one such note held 15 people
+that a note-per-person reading turned into a single "person". A person is
+recognised by the note's name, its title and its `aliases:`, an entry by its
+full name, a nickname in quotes and, after a title (`Hr. Brandt`), its
+surname — whole words, umlauts folded like search.py. A first name alone
+counts only when one known person carries it AND the note also names that
+person's group subject (the group note's links and name): in 300 notes
+"Anna" is three different people, but "Ben" in a note about the shop is the
+Ben of the shop team. Python standard library only.
 """
 from __future__ import annotations
 
@@ -152,24 +158,90 @@ def clean(line, limit=150):
 
 
 # ------------------------------------------------------------------- people
+# A group note lists several people, one bold entry each — "- **Felix Daum** –
+# lawyer in Vienna". Measured on a real brain: one such note held 15 people,
+# and "who can I ask about a lawyer?" answered with the NOTE's name. Entries
+# are people; bold attributes ("**Birthday:**", "**Acme GmbH** (…):") are not —
+# hence the dash after the name, and no colon, digit or company form in it.
+MEMBER = re.compile(r"^\s*[-*+]\s+\*\*(?P<name>[^*\n]{2,80}?)\*\*\s*(?:\([^)\n]{0,80}\)\s*)?[–—-]\s+\S")
+TITLES = {"hr.", "fr.", "herr", "frau", "dr.", "mag.", "prof.", "mr.", "mrs.", "ms.", "sr.", "sra."}
+ARTICLES = {"ein", "eine", "einer", "der", "die", "das", "a", "an", "the", "un", "une", "el", "la", "le",
+            "il", "uno", "una", "my", "mein", "meine"}
+COMPANY = re.compile(r"(?i)(?<!\w)(gmbh|ag|kg|og|ltd|inc|llc|e\.v\.|s\.a\.|srl|bv|plc|corp)(?!\w)")
+LINK = re.compile(r"\[\[([^\]|#]+)")
+# Words that name a kind of group, not its subject: "Ben" in any note that says
+# "team" is not the Ben of the shop team.
+GROUP_WORDS = {"team", "teams", "group", "gruppe", "family", "familie", "people", "leute", "menschen",
+               "contacts", "kontakte", "committee", "komitee", "friends", "freunde", "colleagues", "kollegen",
+               "beteiligte", "members", "mitglieder", "crew", "staff", "personas", "personnes", "persone"}
+
+
+def member_name(raw):
+    """(full name, nicknames) from the bold part of an entry, or None when it
+    is not a person: "Michael („Michi“) Bachmann" → ("Michael Bachmann", ["Michi"])."""
+    nicks = re.findall(r"[„\"“»«]([^“”\"»«]{2,30})[“”\"»«]", raw)
+    name = re.sub(r"\s*\([^)]*\)", "", raw).strip()
+    tokens = name.split()
+    if not 1 <= len(tokens) <= 4 or name.endswith(":") or re.search(r"\d", name) or COMPANY.search(name):
+        return None
+    if tokens[0].lower() in ARTICLES:
+        return None
+    if not all(t[0].isupper() or t.lower() in TITLES or t.lower() in ("von", "van", "de", "da", "di", "zu")
+               for t in tokens):
+        return None
+    return name, nicks
+
+
 class Person:
-    def __init__(self, path):
+    """A person note — or, with `group`, one entry in a group note."""
+
+    def __init__(self, path, entry=None, group=None):
         self.path = Path(path)
-        self.text = read(path)
-        self.front, self.body = front_and_body(self.text)
-        stem = self.path.stem
-        title = self.front.get("title", "").strip("\"'")
-        h1 = next((l[2:].strip() for l in self.body.splitlines() if l.startswith("# ")), "")
-        self.name = h1 or (title if title and not title.startswith("<") else stem.replace("-", " "))
-        names = {stem, stem.replace("-", " "), self.name}
-        if title and not title.startswith("<"):
-            names.add(title)
-        names |= set(as_list(self.front.get("aliases")))
-        self.names = sorted({fold(n).strip() for n in names if len(n.strip()) >= MIN_NAME}, key=len, reverse=True)
+        self.group = group
         self.mentions = []      # (date or None, path, line)
+        if group is None:
+            self.text = read(path)
+            self.front, self.body = front_and_body(self.text)
+            stem = self.path.stem
+            title = self.front.get("title", "").strip("\"'")
+            h1 = next((l[2:].strip() for l in self.body.splitlines() if l.startswith("# ")), "")
+            self.name = h1 or (title if title and not title.startswith("<") else stem.replace("-", " "))
+            names = {stem, stem.replace("-", " "), self.name}
+            if title and not title.startswith("<"):
+                names.add(title)
+            names |= set(as_list(self.front.get("aliases")))
+            self.firsts = set()
+            self.lines = [l for l in self.body.splitlines()]
+            self.members = []
+            # what the note says ABOUT itself, without the entries that are other people
+            self.context = {fold(w) for w in re.split(r"[\s_-]+", stem)
+                            if len(w) >= MIN_NAME + 1 and fold(w) not in GROUP_WORDS}
+            self.context |= {fold(m.strip()) for m in LINK.findall(self.body) if len(m.strip()) >= MIN_NAME + 1}
+        else:
+            name, nicks, lines = entry
+            self.name, self.front, self.text = name, {}, "\n".join(lines)
+            self.body, self.lines, self.members, self.context = self.text, lines, [], group.context
+            tokens = name.split()
+            titled = tokens[0].lower() in TITLES
+            names = set(nicks)
+            if len(tokens) > 1:
+                names.add(name)
+            if titled and len(tokens) > 1:
+                names.add(" ".join(tokens[1:]))              # "Hr. Mürmann" is "Mürmann"
+            # a first name alone is a person only where the group's subject is
+            # in the same note (see collect) — "Ben" in a note about the shop
+            self.firsts = {fold(tokens[0])} if not titled and len(tokens[0]) >= MIN_NAME else set()
+        self.names = sorted({fold(n).strip() for n in names if len(n.strip()) >= MIN_NAME}, key=len, reverse=True)
+
+    def where(self):
+        return f"in {rel(self.path)}" if self.group else rel(self.path)
+
+    def own_lines(self):
+        taken = {l for m in self.members for l in m.lines}
+        return [l for l in self.lines if l not in taken]
 
     def lead(self):
-        for line in self.body.splitlines():
+        for line in self.own_lines():
             s = line.strip()
             if s and not s.startswith(("#", "|", ">", "<!--", "---", "Related:")):
                 return clean(s, 200)
@@ -177,13 +249,38 @@ class Person:
 
     def section(self, *titles):
         out, on = [], False
-        for line in self.body.splitlines():
+        for line in self.own_lines():
             if line.startswith("## "):
                 on = fold(line[3:]).strip() in titles
                 continue
             if on and line.strip().startswith(("-", "*")) and not line.strip().lstrip("-* ").startswith("<"):
                 out.append(clean(line))
         return out
+
+
+def entries(person):
+    """The people a group note lists: each bold entry with its continuation
+    lines (indented, or not starting a new item). Duplicates merge."""
+    found, cur = {}, None
+    for line in person.body.splitlines():
+        m = MEMBER.match(line)
+        if m:
+            parsed = member_name(m.group("name").strip())
+            cur = None
+            if parsed:
+                key = fold(parsed[0])
+                if key in found:
+                    found[key][2].append(line)
+                    found[key][1].extend(n for n in parsed[1] if n not in found[key][1])
+                else:
+                    found[key] = (parsed[0], list(parsed[1]), [line])
+                cur = key
+            continue
+        if cur and line.strip() and line[:1] in (" ", "\t") and not line.lstrip().startswith(("#",)):
+            found[cur][2].append(line)
+        else:
+            cur = None
+    return list(found.values())
 
 
 def people():
@@ -199,39 +296,67 @@ def people():
                 continue
         p = Person(path)
         if p.front.get("status", "").lower() != "deprecated" and p.names:
+            p.members = [Person(path, entry=e, group=p) for e in entries(p)]
             found[str(path)] = p
-    return list(found.values())
-
-
-def matcher(persons):
-    """One pass per line: a single pattern over every name, longest first, so
-    "Anna Berger" wins over an alias "Anna" inside it."""
-    by_name = {}
+    persons = list(found.values())
+    # a group's subject is what it is ABOUT — a link to a person ([[Papa]]) is
+    # not: with it, every note naming that person made "Ben" the group's Ben
+    person_names = {n for p in persons for n in p.names}
     for p in persons:
-        for n in p.names:
-            by_name.setdefault(n, p)
-    if not by_name:
-        return None, by_name
-    names = sorted(by_name, key=len, reverse=True)
-    return re.compile(r"(?<!\w)(" + "|".join(re.escape(n) for n in names) + r")(?!\w)"), by_name
+        p.context -= person_names
+    return persons + [m for p in persons for m in p.members]
+
+
+class Directory:
+    """Who a line names. Full names and aliases count everywhere; a first name
+    counts only when exactly one known person carries it AND the note also
+    names that person's group subject — in 300 notes "Anna" is three people,
+    but "Ben" in a note about the licence project is the Ben of that project."""
+
+    def __init__(self, persons):
+        by_name = {}
+        for p in persons:
+            for n in p.names:
+                by_name.setdefault(n, p)
+        self.by_name = by_name
+        self.full = re.compile(r"(?<!\w)(" + "|".join(re.escape(n) for n in sorted(by_name, key=len, reverse=True))
+                               + r")(?!\w)") if by_name else None
+        counts = {}
+        for p in persons:
+            for f in p.firsts | {n.split()[0] for n in p.names}:
+                counts[f] = counts.get(f, 0) + 1
+        self.first = {f: p for p in persons for f in p.firsts if counts.get(f) == 1}
+        self.firsts = re.compile(r"(?<!\w)(" + "|".join(re.escape(f) for f in sorted(self.first, key=len, reverse=True))
+                                 + r")(?!\w)") if self.first else None
+
+    def in_line(self, folded_line, folded_note):
+        hits = {self.by_name[m.group(1)] for m in self.full.finditer(folded_line)} if self.full else set()
+        if self.firsts:
+            for m in self.firsts.finditer(folded_line):
+                p = self.first[m.group(1)]
+                if p not in hits and any(w in folded_note for w in p.context):
+                    hits.add(p)
+        return hits
 
 
 def collect(persons):
     """Every line that mentions a person, with the best date it has: the
-    line's own date, else the note's (its file name, its `created:`). A
-    person's own note counts only its dated lines — the rest is who they
-    ARE, not a moment you spent with them."""
-    pattern, by_name = matcher(persons)
-    if not pattern:
+    line's own date, else the date of the entry it belongs to, else the
+    note's. A person's own text counts only where it is dated — the rest is
+    who they ARE, not a moment you spent with them."""
+    d = Directory(persons)
+    if not d.full and not d.firsts:
         return
-    own = {str(p.path): p for p in persons}
+    notes_of = {str(p.path): p for p in persons if p.group is None}
     for path in notes():
         if path.name.lower() in ("index.md", "claude.md"):
             continue
         text = read(path)
         front, body = front_and_body(text)
         base = note_date(path, front)
-        mine = own.get(str(path))
+        mine = notes_of.get(str(path))
+        entry_of = {l: m for m in (mine.members if mine else []) for l in m.lines}
+        folded_note = fold(text)
         year = base.year if base else dt.date.today().year
         section = None          # the date a log entry or a dated heading gave the lines below it
         for line in body.splitlines():
@@ -244,18 +369,21 @@ def collect(persons):
                 section = when
             elif when and DATE.match(head.lstrip("-*+> ").lstrip("*_ ")):
                 section = when          # "- 25.11. …": the entry and its continuation lines
-            hits = {by_name[m.group(1)] for m in pattern.finditer(fold(line))}
-            if mine:
-                hits.add(mine)
+            hits = d.in_line(fold(line), folded_note)
+            owner = entry_of.get(line) or mine           # whose own text this line is
+            if owner:
+                hits.add(owner)
             if not hits:
                 continue
             # a project note created in July still logs November: an undated
             # line takes its entry's date before the note's own
             when = when or section
             for p in hits:
-                if p is mine and not when:
+                if p is owner and not when:
                     continue
-                p.mentions.append((when or (None if p is mine else base), path, line))
+                if p is mine and owner is not mine:
+                    continue        # an entry line is about that member, not the group
+                p.mentions.append((when or (None if p is owner else base), path, line))
 
 
 def closeness(p, today):
@@ -281,40 +409,46 @@ def cmd_close(k):
         print("no people notes yet (a folder people/ — or its name in your language — or notes with type: person)")
         return 0
     collect(persons)
-    ranked = sorted(persons, key=lambda p: closeness(p, today), reverse=True)
+    # a group note with its people listed is a container, not someone you are close to
+    ranked = sorted((p for p in persons if len(p.members) < 2), key=lambda p: closeness(p, today), reverse=True)
     print(f"closeness — {len(persons)} people, recent mentions count most (half after {int(HALF_LIFE)} days)")
     for p in ranked[:k]:
         last = last_seen(p, today)
         quiet = f"  (quiet since {last})" if last and (today - last).days > 120 else ""
-        print(f"  {closeness(p, today):5.1f}  {p.name} — {rel(p.path)} · {len(p.mentions)} mentions"
+        print(f"  {closeness(p, today):5.1f}  {p.name} — {p.where()} · {len(p.mentions)} mentions"
               f"{', last ' + last.isoformat() if last else ''}{quiet}")
     return 0
 
 
 def cmd_who(terms, k, contacts_file):
     persons, today = people(), dt.date.today()
-    folded = [fold(t) for t in terms if len(t) >= 2]
+    # "hotels germany" as ONE argument (a quoted call) is two words, not one
+    folded = [fold(w) for t in terms for w in t.split() if len(w) >= 2]
     if not folded:
         print("Usage: people.py who <topic words>")
         return 1
     collect(persons)
     ranked = []
     for p in persons:
-        own_lines = [l for l in p.body.splitlines() if any(t in fold(l) for t in folded)]
+        own = p.own_lines()
+        own_set = set(own)
+        own_lines = [l for l in own if any(t in fold(l) for t in folded)]
         evidence = [(path, line) for _, path, line in p.mentions
-                    if path != p.path and any(t in fold(line) for t in folded)]
-        relevance = 3 * min(len(own_lines), 3) + min(len(evidence), 5)
+                    if not (path == p.path and line in own_set) and any(t in fold(line) for t in folded)]
+        # what their own note says outweighs being mentioned near the topic: on a
+        # real brain, "lawyer" put two people above the lawyers because both were
+        # named in many lines about lawyers. Closeness only breaks near-ties
+        # (at most +50 %) — an additive bonus put the most-mentioned family
+        # member above the actual lawyer.
+        relevance = 10 * min(len(own_lines), 2) + min(len(evidence), 5)
         if relevance:
-            # what they know decides, closeness only breaks near-ties (at most +50 %):
-            # measured on a real brain, an additive bonus put the most-mentioned
-            # family member above the actual lawyer for "lawyer"
             ranked.append((relevance * (1 + min(closeness(p, today), 10) / 20), p, own_lines, evidence))
     ranked.sort(key=lambda r: r[0], reverse=True)
     if not ranked:
         print(f"nobody in the brain is linked to: {' '.join(terms)}")
     for score, p, own_lines, evidence in ranked[:k]:
         last = last_seen(p, today)
-        print(f"\n{p.name} — {rel(p.path)} (close {closeness(p, today):.1f}{', last ' + last.isoformat() if last else ''})")
+        print(f"\n{p.name} — {p.where()} (close {closeness(p, today):.1f}{', last ' + last.isoformat() if last else ''})")
         for l in own_lines[:2]:
             print(f"    own note: {clean(l)}")
         for path, l in evidence[:2]:
@@ -332,7 +466,7 @@ def cmd_who(terms, k, contacts_file):
 
 def find_person(persons, query):
     q = fold(query).strip()
-    exact = [p for p in persons if q in p.names]
+    exact = [p for p in persons if q in p.names or q in p.firsts]
     if exact:
         return exact
     return [p for p in persons if any(q in n for n in p.names)]
@@ -345,11 +479,11 @@ def cmd_brief(query):
         print(f"no person note matches \"{query}\"")
         return 1
     if len(hits) > 1:
-        print("several people match: " + ", ".join(f"{p.name} ({rel(p.path)})" for p in hits[:8]))
+        print("several people match: " + ", ".join(f"{p.name} ({p.where()})" for p in hits[:8]))
         return 1
     p = hits[0]
     collect(persons)
-    print(f"{p.name} — {rel(p.path)}")
+    print(f"{p.name} — {p.where()}")
     if p.lead():
         print(f"  {p.lead()}")
     open_ = p.section("open", "offen", "abierto", "ouvert", "aperto")
@@ -370,16 +504,18 @@ def cmd_brief(query):
 
 def cmd_upcoming(days):
     persons, today = people(), dt.date.today()
-    pattern, by_name = matcher(persons)
-    if not pattern:
+    d = Directory(persons)
+    if not d.full and not d.firsts:
         return 0
     # the top-level notes where dates live (Deadlines and the like) — not Home,
     # whose dated lines are mostly WHEN a question was asked, not a meeting
     sources = [f for f in sorted(VAULT.glob("*.md")) if f.name.lower() not in ("claude.md", "home.md", "index.md")]
     seen, out = set(), []
     for src in sources:
-        for line in read(src).splitlines():
-            names = {by_name[m.group(1)] for m in pattern.finditer(fold(line))}
+        text = read(src)
+        folded_note = fold(text)
+        for line in text.splitlines():
+            names = d.in_line(fold(line), folded_note)
             if not names:
                 continue
             plain = re.sub(r"\[\[[^\]]*\]\]", " ", line)    # a date in a link is a note's name
@@ -397,7 +533,7 @@ def cmd_upcoming(days):
     for when, line, names in sorted(out, key=lambda o: o[0]):
         print(f"{when} {line}")
         for p in names:
-            print(f"    → {p.name}: {rel(p.path)}")
+            print(f"    → {p.name}: {p.where()}")
     return 0
 
 
