@@ -106,6 +106,14 @@ the global rules name it).
      untouched ones, never the whole answer. → ONE collected question, "archive to `90-archive/`
      or still active?", never one per file. Archive beats delete for finished projects, delete beats
      archive for noise.
+   - **findability — the exam:** `python3 <vault>/.tools/exam.py --record` checks whether search
+     still brings up the note each saved question is about. Put its first line in the report. A
+     MISSED question is fixed in the NOTE, never in the exam: the note lacks the words people search
+     for — add them to its heading or first sentence, or a link from where people look. STALE = the
+     note was renamed: update the path. "WORSE than" last time → say so first. Then propose ONE or
+     two new questions from notes filed this week, phrased the way the person would ask, with the
+     search terms an agent would use; add them only with their OK (`exam.py add "<question>"
+     --terms "<terms>" --expect <path>`; in autonomous mode park the proposal as an open question).
 5. **Deepen 2–3 notes (this is where depth comes from):** oldest or most-used `maturity: seed`/`growing`
    knowledge notes, preferring frontier notes (many outgoing `[[links]]`, few or no inbound); grow
    them toward the note anatomy in the vault `CLAUDE.md` — missing `source:`, one concrete case or

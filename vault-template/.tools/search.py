@@ -46,6 +46,7 @@ SKIP_DIRS = {".git", ".obsidian", ".tools", "_templates"}
 
 W_NAME, W_NAME_IN = 5.0, 2.0        # title / filename
 W_TAG, W_TAG_IN = 3.0, 1.0          # tags
+W_LEAD, W_LEAD_IN = 3.0, 1.0        # the note's heading and first sentence (see lead_block)
 W_BODY, W_BODY_IN = 1.0, 0.4        # body lines
 BODY_CAP = 5.0                      # body word starts approach, never pass, this
 BODY_HALF = 4.0                     # shape of that approach (see score_file)
@@ -95,9 +96,19 @@ INFRA_FILES = {"CLAUDE.md", "index.md", "Home.md", "Deadlines.md",
 def plural(n, word):
     return f"{n} {word}" + ("" if n == 1 else "s")
 
+UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
 def fold(text):
-    """Lowercase + strip accents + German sharp s, so voice-typed queries match."""
-    text = text.lower().replace("ß", "ss")
+    """Lowercase, German umlauts as their two-letter spelling, other accents
+    stripped — so a query matches however the note happened to be written.
+
+    `ä` is `ae` in German, not `a`. Stripping it to `a` made `länge` miss a
+    note named `interviewlaenge` (measured on a real vault, where file names
+    are written ASCII and the text is not) and, worse, made different words
+    the same one: schon/schön, zahlen/zählen, drucken/drücken. Composed first
+    (NFC), because macOS hands out file names decomposed. Other accents keep
+    being stripped: cafe still matches café."""
+    text = unicodedata.normalize("NFC", text.lower()).translate(UMLAUT)
     text = unicodedata.normalize("NFKD", text)
     return "".join(c for c in text if not unicodedata.combining(c))
 
@@ -153,6 +164,37 @@ def tags_block(text):
     """Everything under a YAML `tags:` key, incl. multi-line list items."""
     m = re.search(r"^tags:(.*(?:\n[ \t]+-[^\n]*)*)", text, re.M)
     return m.group(0) if m else ""
+
+def lead_block(text):
+    """The `# heading` and the first lines of prose under it — where a note
+    says what it is ABOUT. A person note named after the person says "lawyer,
+    reviews the writing limit" once, right there; project notes that merely
+    mention the lawyer say it on many lines and used to outrank it (measured:
+    the person came fourth for exactly those words). Counted like tags: once
+    per term, never more."""
+    body = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+    heading, prose = "", []
+    for line in body.splitlines():
+        s = line.strip()
+        if not heading and s.startswith("# "):
+            heading = s[2:]
+            continue
+        if not s:
+            if prose:
+                break
+            continue
+        # Only prose is a lead: a list or a table under the heading is the
+        # note's content, and a project log's first bullet says what happened
+        # once, not what the note is about.
+        if s.startswith(("#", "|", ">", "```", "<!--", "- ", "* ", "+ ")) or re.match(r"\d+[.)] ", s) \
+                or s.startswith(("**Datum", "**Date")):
+            if prose:
+                break
+            continue
+        prose.append(s)
+        if sum(len(x) for x in prose) > 300:
+            break
+    return fold(" ".join([heading] + prose))[:400]
 
 def frontmatter(text):
     """The YAML block at the very top — and nothing else.
@@ -296,6 +338,7 @@ def stats(root):
 def score_file(text, name, terms):
     """Score one file against all terms. Returns (score, up to 3 sample lines)."""
     tags = fold(tags_block(text))
+    lead = lead_block(text)
     raw_lines = text.splitlines()
     folded_lines = [fold(l) for l in raw_lines]
     score, starts, insides = 0.0, [], []
@@ -310,6 +353,10 @@ def score_file(text, name, terms):
             score += W_TAG
         elif inside_ok and t in tags:
             score += W_TAG_IN
+        if pat.search(lead):
+            score += W_LEAD
+        elif inside_ok and t in lead:
+            score += W_LEAD_IN
         hits, inside_score = 0, 0.0
         for raw, line in zip(raw_lines, folded_lines):
             start_hit = bool(pat.search(line))

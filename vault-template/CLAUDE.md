@@ -274,6 +274,10 @@ garden; it never replaces the plants.
   will never match this schema. The report names what it skipped, so the
   exemption stays visible. Everything else stays in: a report that is
   permanently red gets ignored, and then the real findings go unread.
+- Findability: `python3 .tools/exam.py` runs the vault's saved questions through
+  `search.py` and says how many still find their note in the top three
+  (`--record` keeps the score; `add` saves a new question). A miss means a
+  note lacks the words people search for — fix the note, not the exam.
 - Unattended weekly review (only if the person asked for it):
   `python3 .tools/autoreview.py install`, then `status` · `run --now` ·
   `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,

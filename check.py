@@ -720,6 +720,54 @@ def check_autoreview(tmp):
     ok(label)
 
 
+def check_exam(tmp):
+    """The exam measures findability, so it is checked against what made the
+    real vault's searches miss: a note named in ASCII (`interviewlaenge`) for
+    a query with the umlaut, a person note outranked by projects that only
+    mention the person, and a macOS file name stored decomposed (NFD) that
+    looks identical to the typed question and is not."""
+    import unicodedata
+    label = "exam measures findability honestly"
+    vault = os.path.join(tmp, "examvault")
+    assemble(vault, "personal")
+    set_mode(vault, "personal")
+    nfd = unicodedata.normalize("NFD", "Französisch-Problem.md")
+    notes = {
+        "30-knowledge/people/Jane-Doe.md": "# Dr. Jane Doe\nLawyer in Vienna. Could review the writing limit.\n",
+        "10-projects/Big-Project.md": "# Big project\n" + "".join(
+            f"- step {i}: ask the lawyer about the writing limit\n" for i in range(12)),
+        "10-projects/Other-Project.md": "# Other\n" + "the lawyer and the writing limit again\n" * 6,
+        "10-projects/Third-Project.md": "# Third\n" + "lawyer, writing limit, lawyer\n" * 5,
+        "40-decisions/2026-01-01-interview-laenge.md": "# Wie lang das Interview wird\n22 Minuten.\n",
+        "40-decisions/2026-01-02-interviews-online.md": "# Interviews online\nInterview Interview Interview.\n",
+        "30-knowledge/" + nfd: "# Französisch\nZweites Problemfach.\n",
+    }
+    for rel, text in notes.items():
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    exam = os.path.join(vault, ".tools", "exam.py")
+    ex = lambda *a: run([exam, *a], cwd=vault)
+    for q, terms, expect in (("Who could review the writing limit?", "lawyer writing", "30-knowledge/people/Jane-Doe.md"),
+                             ("Wie lang soll das Interview sein?", "interview länge", "40-decisions/2026-01-01-interview-laenge.md"),
+                             ("Wie schlimm ist Französisch?", "französisch", "30-knowledge/Französisch-Problem.md")):
+        r = ex("add", q, "--terms", terms, "--expect", expect)
+        if r.returncode:
+            return bad(label, f"add refused {expect}: {r.stdout.strip()[:100]}")
+    if ex("add", "x", "--terms", "x", "--expect", "30-knowledge/missing.md").returncode == 0:
+        return bad(label, "add accepted a note that does not exist")
+    r = ex("--record")
+    if not r.stdout.startswith("exam (search.py): 3 of 3 found in the top 3"):
+        return bad(label, "the three known cases are not all found: " + r.stdout.strip()[:300])
+    os.remove(os.path.join(vault, "40-decisions", "2026-01-01-interview-laenge.md"))
+    r = ex("--record")
+    if "2 of 2 found" not in r.stdout or "STALE" not in r.stdout or "same as" not in r.stdout:
+        return bad(label, "a renamed note was not reported as STALE (or history not compared): "
+                          + r.stdout.strip()[:200])
+    ok(label)
+
+
 def check_kit_portability():
     """The kit itself must survive a `git clone` on Windows and on Linux."""
     spec = importlib.util.spec_from_file_location("hyg", tool("hygiene.py"))
@@ -1226,6 +1274,7 @@ def main():
         check_harvest(tmp)
         check_hooks(tmp)
         check_autoreview(tmp)
+        check_exam(tmp)
         check_mode_guard(tmp)
         check_translated_vault(tmp)
         check_translated_company(tmp)
