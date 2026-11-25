@@ -263,6 +263,7 @@ count = pathlib.Path(os.environ["FAKE_COUNT"])
 count.write_text(str(int(count.read_text() or 0) + 1 if count.exists() else 1))
 pathlib.Path(os.environ["FAKE_PROMPT"]).write_text(sys.argv[sys.argv.index("-p") + 1], encoding="utf-8")
 pathlib.Path(os.environ["FAKE_PROMPT"] + ".argv").write_text("\n".join(sys.argv), encoding="utf-8")
+pathlib.Path(os.environ["FAKE_PROMPT"] + ".env").write_text(os.environ.get("BRAINWARDEN_UNATTENDED", ""), encoding="utf-8")
 mode = os.environ.get("FAKE_MODE", "ok")
 if mode == "inject":                  # what a note smuggling instructions could make a model do
     with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
@@ -495,6 +496,10 @@ def check_autoreview(tmp):
     if not allowed or wide or "--strict-mcp-config" not in argv or mode_ != "default" \
             or not set(offered) <= {"Read", "Edit", "Write", "Glob", "Grep", "Bash", "Skill"}:
         return bad(label, f"the unattended model gets too much: {wide or (mode_, offered)}")
+    exam_rules = [a for a in allowed if "exam.py" in a]
+    if not exam_rules or any(not a.endswith("exam.py --record)") for a in exam_rules) \
+            or open(prompt + ".env", encoding="utf-8").read() != "1":
+        return bad(label, f"exam.py is not limited to an exact --record, or the run is not marked unattended: {exam_rules}")
 
     # 5c. a run that touches kit files is rolled back whole — not just the files
     write(".git/hooks/pre-push", "#!/bin/sh\necho original\n")       # a hook the person set up
@@ -757,6 +762,10 @@ def check_exam(tmp):
             return bad(label, f"add refused {expect}: {r.stdout.strip()[:100]}")
     if ex("add", "x", "--terms", "x", "--expect", "30-knowledge/missing.md").returncode == 0:
         return bad(label, "add accepted a note that does not exist")
+    unattended = run([exam, "add", "q", "--terms", "lawyer", "--expect", "30-knowledge/people/Jane-Doe.md"],
+                     cwd=vault, env=dict(os.environ, BRAINWARDEN_UNATTENDED="1"))
+    if unattended.returncode != 2 or "refused" not in unattended.stdout:
+        return bad(label, "exam.py added a question during an unattended run")
     r = ex("--record")
     if not r.stdout.startswith("exam (search.py): 3 of 3 found in the top 3"):
         return bad(label, "the three known cases are not all found: " + r.stdout.strip()[:300])

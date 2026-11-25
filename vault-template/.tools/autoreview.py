@@ -108,12 +108,13 @@ DEFAULTS = {
 # future CLI version: protected files are hashed before the run and compared
 # after (see `protected`).
 TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
-# exam.py only with --record: measuring is fine, `add` writes into .tools/ and
-# would (rightly) roll the whole run back — new questions need the person's OK.
-VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "exam.py --record", "autoreview.py move ",
-               "autoreview.py delete "]
+VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "autoreview.py move ", "autoreview.py delete "]
+# exam.py exactly as `--record`, no wildcard: `--record add …` would write into
+# .tools/ and `--backend qmd` would start another program. exam.py refuses both
+# on its own as well while BRAINWARDEN_UNATTENDED is set (run_claude sets it).
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
-    f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS]
+    f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS] + [
+    f"Bash({py} .tools/exam.py --record)" for py in ("python3", "python", "py -3")]
 PROTECTED_DIRS = (".tools", ".git", ".obsidian", ".claude")
 DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Edit(**/.claude/**)"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
     f"Edit(**/{n})" for n in ("CLAUDE.md", "claude.md", "CLAUDE.local.md", ".mcp.json")] + [
@@ -898,7 +899,8 @@ def run_claude(cmd, prompt, cfg):
         with open(log_path(), "a", encoding="utf-8") as fh:
             # stdin closed: otherwise `claude -p` waits three seconds for piped input
             r = subprocess.run(full, cwd=str(VAULT), stdin=subprocess.DEVNULL, stdout=fh,
-                               stderr=subprocess.STDOUT, timeout=cfg["max_run_s"] * 2)
+                               stderr=subprocess.STDOUT, timeout=cfg["max_run_s"] * 2,
+                               env=dict(os.environ, BRAINWARDEN_UNATTENDED="1"))
         status = r.returncode
     except subprocess.TimeoutExpired:
         say("the run hung and was stopped")

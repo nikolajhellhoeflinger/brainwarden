@@ -229,6 +229,11 @@ def main():
     ad.add_argument("--terms", required=True)
     ad.add_argument("--expect", required=True, action="append")
     a = ap.parse_args()
+    if os.environ.get("BRAINWARDEN_UNATTENDED") and (a.cmd == "add" or a.backend != "search"):
+        # The unattended review may measure, nothing else: a new question
+        # needs the person's OK, and another search program is another program.
+        print("refused while unattended: only `exam.py --record` (add questions in a normal chat)")
+        return 2
     return cmd_add(a) if a.cmd == "add" else cmd_exam(a)
 
 
