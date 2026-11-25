@@ -132,8 +132,11 @@ def run_text(argv):
     unattended review writes into: a planted `faster_whisper.py` there would
     run with the next tick's rights."""
     with tempfile.TemporaryDirectory() as neutral:
+        # UTF-8 out of every Python engine: on Windows a child prints in the old
+        # code page, and "für" arrived as "f\ufffdr" (seen in CI)
         r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=TIMEOUT, cwd=neutral, stdin=subprocess.DEVNULL)
+                           timeout=TIMEOUT, cwd=neutral, stdin=subprocess.DEVNULL,
+                           env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
     if r.returncode:
         raise RuntimeError((r.stderr or r.stdout).strip()[-300:] or f"exit {r.returncode}")
     return r.stdout

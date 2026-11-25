@@ -421,7 +421,9 @@ def resurface(root, k=3, days=7, quiet=60):
     by_stem = {}
     for rel in notes:
         by_stem.setdefault(fold(os.path.splitext(os.path.basename(rel))[0]), rel)
-    skip = lambda rel: is_infra(rel) or os.path.basename(rel).lower() in ("index.md", "claude.md") \
+    # is_infra reads the OS's own separator: given "a/b.md" on Windows it saw a
+    # root page in every note and skipped them all (seen in CI)
+    skip = lambda rel: is_infra(rel.replace("/", os.sep)) or os.path.basename(rel).lower() in ("index.md", "claude.md") \
         or rel.split("/")[0].startswith("00-")
     week = {rel for rel in notes if not skip(rel) and age(rel) is not None and age(rel) <= days}
     if not week:
