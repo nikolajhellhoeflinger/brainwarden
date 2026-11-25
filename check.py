@@ -33,6 +33,7 @@ the order they were found:
 check.sh still exists and still works; it only looks for a python now.
 """
 import importlib.util
+import io
 import json
 import os
 import re
@@ -40,6 +41,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
+from datetime import date, timedelta
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(ROOT, "vault-template")
@@ -148,6 +151,164 @@ def check_harvest(tmp):
         if needle not in r.stdout:
             return bad("harvest runs", f"{label}: no {needle!r} in output")
     ok("harvest runs")
+
+
+def check_harvest_imports(tmp):
+    """The two cold-start sources a person already owns: the Claude app's
+    data export and a calendar file. Synthetic fixtures only — nothing real
+    is read. What is measured is what would hurt: a chat archive dumped by
+    default, a reply of Claude's passed off as the person's words, a date
+    that lands on the wrong day or comes from the past."""
+    check_harvest_export(tmp)
+    check_harvest_calendar(tmp)
+
+
+def check_harvest_export(tmp):
+    label = "harvest lists a Claude export, no text"
+    mine, mine2, other = "MINE-7f3a-words", "MINE-c41d-in-text", "MINE-5a0e-other-chat"
+    reply, reply2, tail = "CLAUDE-e9b2-reply", "CLAUDE-0b6d-reply", "TAIL-91bb-past-the-cut"
+    markers = (mine, mine2, other, reply, reply2, tail)
+    convs = [
+        {"uuid": "11111111-aaaa-4aaa-8aaa-000000000001", "name": "Prüfung vorbereiten",
+         "created_at": "2026-03-01T08:00:00Z",
+         "chat_messages": [
+             # newer exports: `text` empty, the words in content[]
+             {"sender": "human", "text": "", "created_at": "2026-03-10T09:00:00.000000Z",
+              "content": [{"type": "text", "text": "Wann ist die Prüfung? " + mine}]},
+             {"sender": "assistant", "text": reply, "created_at": "2026-03-10T09:00:05Z",
+              "content": [{"type": "text", "text": reply}]},
+             # over a megabyte in one message: the reader has to read on, and
+             # --show has to cut it before the end
+             {"sender": "human", "text": mine2 + " " + "lorem " * 200_000 + tail,
+              "created_at": "2026-03-10T09:05:00Z"}]},
+        {"uuid": "22222222-bbbb-4bbb-8bbb-000000000002", "name": "Umzug nach Graz",
+         "chat_messages": [
+             {"sender": "human", "text": other, "created_at": "2026-06-01T12:00:00Z"},
+             {"sender": "assistant", "text": reply2, "created_at": "2026-06-01T12:00:09Z"}]},
+        {"uuid": "33333333-cccc-4ccc-8ccc-000000000003", "created_at": "2025-12-24T18:00:00Z"},
+        "not a conversation",
+    ]
+    data = json.dumps(convs, ensure_ascii=False)
+    folder = os.path.join(tmp, "claude-export", "data-2026-11-20-10-00-00")
+    os.makedirs(folder)
+    with open(os.path.join(folder, "conversations.json"), "w", encoding="utf-8") as fh:
+        fh.write(data)
+    archive = os.path.join(tmp, "claude-export.zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("conversations.json", data)
+        zf.writestr("users.json", "[]")
+    ex = lambda *a, **kw: run([tool("harvest.py"), "--claude-export", *a], **kw)
+    rows = (r"^2026-06-01\s+1\s+22222222\s+Umzug nach Graz$",          # newest first,
+            r"^2026-03-10\s+2\s+11111111\s+Prüfung vorbereiten$",      # by the newest message
+            r"^2025-12-24\s+0\s+33333333\s+\(untitled\)$")
+    for name, path in (("zip", archive), ("folder", os.path.join(tmp, "claude-export")),
+                       ("conversations.json", os.path.join(folder, "conversations.json"))):
+        r = ex(path)
+        if r.returncode or "Traceback" in r.stderr:
+            return bad(label, f"{name}: exit {r.returncode} {r.stderr.strip()[-160:]}")
+        at = [re.search(p, r.stdout, re.M) for p in rows]
+        if not all(at) or [m.start() for m in at] != sorted(m.start() for m in at):
+            return bad(label, f"{name}: not date · your count · id · title, newest first: "
+                              + r.stdout.strip()[:300])
+        leaked = [m for m in markers if m in r.stdout]
+        if leaked:
+            return bad(label, f"{name}: the listing printed message text {leaked}")
+
+    r = ex(archive, "--show", "11111111-aaaa-4aaa-8aaa-000000000001")
+    if r.returncode or mine not in r.stdout or mine2 not in r.stdout:
+        return bad(label, "--show lost the person's own words: " + r.stdout.strip()[:200])
+    if reply in r.stdout or other in r.stdout:
+        return bad(label, "--show printed Claude's reply or another conversation")
+    if tail in r.stdout:
+        return bad(label, "--show printed a megabyte message whole, not cut")
+    r = ex(folder, "--show", "22222222")                    # the short id from the listing
+    if r.returncode or other not in r.stdout or reply2 in r.stdout or mine in r.stdout:
+        return bad(label, "--show by short id is wrong: " + r.stdout.strip()[:200])
+
+    for args, want, absent in ((["--grep", "Pruefung"], "Prüfung vorbereiten", "Umzug"),
+                               (["--grep", "prufung"], "Prüfung vorbereiten", "Umzug"),
+                               (["--grep", "GRAZ", "umzug"], "Umzug nach Graz", "Prüfung"),
+                               (["--grep", "umzug", "vorbereiten"], "matching: 0", "Umzug nach"),
+                               (["--since", "2026-04-01"], "Umzug nach Graz", "Prüfung")):
+        r = ex(archive, *args)
+        if r.returncode or want not in r.stdout or absent in r.stdout:
+            return bad(label, f"{' '.join(args)} filters wrong: " + r.stdout.strip()[:200])
+
+    # The reader must not depend on where the buffer happens to end.
+    spec = importlib.util.spec_from_file_location("harvest_under_test", tool("harvest.py"))
+    hv = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hv)
+    doc = [{"name": "x ] [ , \" }", "n": [1, 2.5, -3e2, None, True]}, 12345, "s,]", [], {}, 987654321]
+    text = " \n" + json.dumps(doc, indent=1) + "\n"
+    for chunk in (1, 2, 3, 7, 64):
+        if list(hv.iter_json_array(io.StringIO(text), chunk)) != doc:
+            return bad(label, f"the streaming reader misreads at chunk size {chunk}")
+    try:
+        list(hv.iter_json_array(io.StringIO(text[:len(text) // 2]), 5))
+        return bad(label, "a cut-off conversations.json reads as complete")
+    except ValueError:
+        pass
+
+    r = ex(archive, env=dict(os.environ, BRAINWARDEN_UNATTENDED="1"))
+    if r.returncode != 2 or "Umzug" in r.stdout:
+        return bad(label, f"unattended run was not refused (exit {r.returncode})")
+    ok(label)
+
+
+def check_harvest_calendar(tmp):
+    label = "harvest turns a calendar into deadlines"
+    today = date.today()
+    day = lambda n: today + timedelta(days=n)
+    ics_day = lambda n: day(n).strftime("%Y%m%d").encode()
+    yearly = day(30)
+    if (yearly.month, yearly.day) == (2, 29):              # would next exist in four years
+        yearly = day(31)
+    lines = [
+        b"BEGIN:VCALENDAR", b"VERSION:2.0",
+        b"BEGIN:VTIMEZONE", b"TZID:Europe/Vienna", b"BEGIN:STANDARD",
+        b"DTSTART:19701025T030000", b"END:STANDARD", b"END:VTIMEZONE",
+        # all-day; the reminder comes first and has a SUMMARY of its own;
+        # the title is folded with a space
+        b"BEGIN:VEVENT", b"UID:e1", b"DTSTART;VALUE=DATE:" + ics_day(5),
+        b"BEGIN:VALARM", b"ACTION:DISPLAY", b"SUMMARY:ALARM-3c1f", b"END:VALARM",
+        b"SUMMARY:Abgabe Fach", b" bereichsarbeit", b"END:VEVENT",
+        # folded with a tab, and cut inside the two bytes of the u-umlaut
+        b"BEGIN:VEVENT", b"UID:e2", b"DTSTART;VALUE=DATE:" + ics_day(6),
+        b"SUMMARY:Mathe-Pr\xc3", b"\t\xbcfung", b"END:VEVENT",
+        # a time zone in quotes, with a colon in it (Outlook writes these)
+        b"BEGIN:VEVENT", b"UID:e3",
+        b'DTSTART;TZID="(UTC+01:00) Amsterdam, Berlin":' + ics_day(7) + b"T090000",
+        b"SUMMARY:Zahnarzt\\, Kontrolle", b"END:VEVENT",
+        b"BEGIN:VEVENT", b"UID:e4", b"DTSTART:" + ics_day(9) + b"T120000Z",
+        b"SUMMARY:Flug nach Wien", b"END:VEVENT",
+        b"BEGIN:VEVENT", b"UID:e5", b"DTSTART;VALUE=DATE:" + ics_day(-10),
+        b"SUMMARY:PAST-8d2e", b"END:VEVENT",
+        b"BEGIN:VEVENT", b"UID:e6", b"DTSTART;VALUE=DATE:" + ics_day(200),
+        b"SUMMARY:LATER-4b7a", b"END:VEVENT",
+        b"BEGIN:VEVENT", b"UID:e7", b"SUMMARY:NO-START-6f19", b"END:VEVENT",
+        b"BEGIN:VTODO", b"DTSTART:" + ics_day(4), b"SUMMARY:TODO-2a8c", b"END:VTODO",
+        b"BEGIN:VEVENT", b"UID:e8",
+        b"DTSTART;VALUE=DATE:2020" + yearly.strftime("%m%d").encode(),
+        b"RRULE:FREQ=YEARLY", b"SUMMARY:Geburtstag Anna", b"END:VEVENT",
+        b"END:VCALENDAR", b""]
+    path = os.path.join(tmp, "calendar.ics")
+    with open(path, "wb") as fh:
+        fh.write(b"\r\n".join(lines))
+    want = [f"- {day(5)} Abgabe Fachbereichsarbeit",
+            f"- {day(6)} Mathe-Prüfung",
+            f"- {day(7)} Zahnarzt, Kontrolle",
+            f"- {day(9)} Flug nach Wien",
+            f"- {yearly} Geburtstag Anna (repeats)"]
+    for args, expect in (([], want), (["--days", "8"], want[:3])):
+        r = run([tool("harvest.py"), "--ics", path, *args])
+        got = [l for l in r.stdout.splitlines() if l.startswith("- ")]
+        if r.returncode or "Traceback" in r.stderr or got != expect:
+            return bad(label, f"{' '.join(args) or 'default window'}: {got or r.stderr.strip()[-160:]}"
+                              f" — expected {expect}")
+    r = run([tool("harvest.py"), "--ics", path], env=dict(os.environ, BRAINWARDEN_UNATTENDED="1"))
+    if r.returncode != 2 or "- " + str(day(5)) in r.stdout:
+        return bad(label, f"unattended run was not refused (exit {r.returncode})")
+    ok(label)
 
 
 def check_hooks(tmp):
@@ -1722,6 +1883,7 @@ def main():
     check_kit_portability()
     with tempfile.TemporaryDirectory() as tmp:
         check_harvest(tmp)
+        check_harvest_imports(tmp)
         check_hooks(tmp)
         check_project_context(tmp)
         check_transcribe(tmp)

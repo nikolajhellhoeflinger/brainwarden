@@ -1049,6 +1049,26 @@ written without a second yes.**
 Cap it: **at most 3 notes per session** harvested, and "nothing worth
 keeping in this one" is a correct and frequent result.
 
+**Two more sources they already have** — same tool, same two yeses, both
+read-only, both refused in an unattended run:
+
+- **Their chats in the Claude app.** The app's data export (Settings →
+  Privacy → Export data; it arrives as a .zip) holds every conversation.
+  `<python> <vault>/.tools/harvest.py --claude-export <zip or folder>`
+  lists them — date, title, how many messages THEY wrote — and prints no
+  message text at all; `--grep <words>` and `--since <date>` narrow the
+  list. Let them point at the conversations that matter; `--show <id>`
+  then prints their own messages of that one conversation, never Claude's
+  replies, and the capture is written from that in the chat — origin in
+  the note ("Claude export, <date>"), the cap of 3, never a decision record.
+- **Their calendar.** `<python> <vault>/.tools/harvest.py --ics <file.ics>`
+  prints the next 120 days (`--days N`) as `- YYYY-MM-DD Summary` lines,
+  the Deadlines format, dates only. Show the list and let them pick: a
+  deadline belongs in `Deadlines.md`, a dentist appointment does not, and
+  whatever came from a file goes under "Unconfirmed" until they confirm it.
+  (Google Calendar exports a .zip with one .ics per calendar — unzip it and
+  pass the calendar that holds the dates.)
+
 ### 8b. The onboarding interview (recommended — but THEIR call)
 The brain is already usable. Offer the deepening, don't impose it. If the
 harvest ran, name the gaps it left and let the interview close those
