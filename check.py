@@ -90,7 +90,7 @@ def load_company_drops():
 
 
 def check_compiles():
-    targets = [tool(n) for n in ("search.py", "hygiene.py", "harvest.py")]
+    targets = [tool(n) for n in ("search.py", "hygiene.py", "harvest.py", "transcribe.py")]
     # progress.py lebt im company-Overlay und war deshalb in keiner Liste —
     # ein Syntaxfehler darin ging grün durch, obwohl genau dieses Werkzeug
     # die eine Zahl liefert, auf die sich ein Firmen-Vault verlässt.
@@ -476,6 +476,94 @@ def check_project_context(tmp):
         loud.append("broken input")
     if loud:
         return bad(label, f"spoke where it must be silent: {loud}")
+    ok(label)
+
+
+FAKE_STT = r'''
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+if "FAIL" in text:
+    sys.exit("engine crashed")
+print("" if "SILENT" in text else text)
+'''
+
+
+def check_transcribe(tmp):
+    """Voice memos: transcribed by whatever engine is there, filed as an
+    ordinary capture, the audio kept and embedded — and a memo the engine
+    could not read stays in the inbox for the next try, never half-done."""
+    label = "voice memos become captures"
+    vault = os.path.join(tmp, "voicevault")
+    assemble(vault, "personal")
+    fake = os.path.join(tmp, "fake_stt.py")
+    with open(fake, "w", encoding="utf-8") as fh:
+        fh.write(FAKE_STT)
+    env = dict(os.environ, BRAINWARDEN_TRANSCRIBER=json.dumps([sys.executable, fake, "{audio}"]))
+    script = os.path.join(vault, ".tools", "transcribe.py")
+
+    def tr(*args, env_=None):
+        return subprocess.run([sys.executable, script, *args], cwd=vault, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=env_ or env)
+
+    def put(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    inbox = lambda: sorted(f for f in os.listdir(os.path.join(vault, "00-inbox")) if "-voice-" in f)
+    exists = lambda rel: os.path.exists(os.path.join(vault, *rel.split("/")))
+    if tr("--check").stdout.strip() != "engine: your command":
+        return bad(label, "--check does not name the configured engine")
+    put("00-inbox/Neue Aufnahme.m4a", "Idee für Hotels in Tirol, zuerst die mit Kinderkino. Zweiter Satz.")
+    put("00-inbox/bad.ogg", "FAIL")
+    put("00-inbox/voice/quiet.opus", "SILENT")
+    r = tr()
+    notes = inbox()
+    good = [n for n in notes if "idee-fuer-hotels-in-tirol" in n]
+    if r.returncode != 1 or len(notes) != 2 or not good:
+        return bad(label, f"first run: exit {r.returncode}, notes {notes} {r.stdout.strip()[-150:]}")
+    text = open(os.path.join(vault, "00-inbox", good[0]), encoding="utf-8").read()
+    if "zuerst die mit Kinderkino" not in text or "![[Neue Aufnahme.m4a]]" not in text \
+            or not text.startswith("# Idee für Hotels in Tirol, zuerst die mit Kinderkino.\n"):
+        return bad(label, f"the capture lacks the transcript, the title or the embedded recording: {text[:160]!r}")
+    if exists("00-inbox/Neue Aufnahme.m4a") or not exists("90-archive/voice/Neue Aufnahme.m4a"):
+        return bad(label, "the transcribed recording was not moved next to the archive")
+    if not exists("00-inbox/bad.ogg") or exists("90-archive/voice/bad.ogg"):
+        return bad(label, "a memo the engine failed on was moved or lost instead of left for the next try")
+    quiet = [n for n in notes if n not in good]
+    if "No speech recognised" not in open(os.path.join(vault, "00-inbox", quiet[0]), encoding="utf-8").read():
+        return bad(label, "a silent recording did not say so")
+    if tr().returncode != 1 or inbox() != notes:
+        return bad(label, f"a second run duplicated captures: {inbox()}")
+    hyg = subprocess.run([sys.executable, os.path.join(vault, ".tools", "hygiene.py")], cwd=vault,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    if "Neue Aufnahme" in hyg:
+        return bad(label, "hygiene reports the embedded recording as a dead link")
+    os.remove(os.path.join(vault, "00-inbox", "bad.ogg"))
+    # no engine at all: nothing happens, nothing is lost, and it says why
+    bare = {k: v for k, v in os.environ.items() if k != "BRAINWARDEN_TRANSCRIBER"}
+    bare["PATH"] = os.path.join(tmp, "empty-path")
+    put("00-inbox/later.m4a", "for later")
+    r = tr(env_=bare)
+    if r.returncode != 0 or "no speech engine" not in r.stdout or not exists("00-inbox/later.m4a") \
+            or tr("--check", env_=bare).returncode != 1:
+        return bad(label, f"without an engine: exit {r.returncode}, {r.stdout.strip()[:120]}")
+    # the runner's tick: only when switched on, and without a model call
+    ar = os.path.join(vault, ".tools", "autoreview.py")
+    logs = os.path.join(vault, ".tools", "logs")
+    os.makedirs(logs, exist_ok=True)
+    with open(os.path.join(logs, "last-success"), "w", encoding="utf-8") as fh:
+        fh.write(__import__("datetime").date.today().isoformat() + "\n")     # not due: no review
+    tick = lambda: subprocess.run([sys.executable, ar, "run"], cwd=vault, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", env=env)
+    tick()
+    if not exists("00-inbox/later.m4a"):
+        return bad(label, "the tick transcribed without being switched on")
+    tr("--auto", "on")
+    r = tick()
+    if r.returncode or exists("00-inbox/later.m4a") or not [n for n in inbox() if "for-later" in n]:
+        return bad(label, f"the switched-on tick left the memo: exit {r.returncode} {r.stderr.strip()[-120:]}")
     ok(label)
 
 
@@ -1470,6 +1558,7 @@ def main():
         check_harvest(tmp)
         check_hooks(tmp)
         check_project_context(tmp)
+        check_transcribe(tmp)
         check_autoreview(tmp)
         check_exam(tmp)
         check_mode_guard(tmp)

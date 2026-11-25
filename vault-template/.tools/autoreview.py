@@ -1094,6 +1094,23 @@ def prune_logs(keep=12):
             pass
 
 
+def transcribe_memos():
+    """Voice memos become captures on every tick, not once a week — no model
+    call, nothing leaves the machine (transcribe.py). Only when switched on
+    (`transcribe.py --auto on`): the first use downloads a speech model, and
+    that must not start unasked in a background job."""
+    script = TOOLS / "transcribe.py"
+    if not script.is_file():
+        return
+    try:
+        r = subprocess.run([sys.executable, str(script), "--quiet"], cwd=str(VAULT), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=7200, stdin=subprocess.DEVNULL)
+        for line in (r.stdout + r.stderr).strip().splitlines():
+            say(f"voice memo: {line}")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        say(f"voice memos not transcribed: {e.__class__.__name__}")
+
+
 def cmd_run(now=False):
     cfg = load_config()
     LOGS.mkdir(parents=True, exist_ok=True)
@@ -1109,6 +1126,8 @@ def cmd_run(now=False):
         LOCK.unlink()        # orphaned by an aborted run: clear it, never block on it
 
     watchdog(cfg)
+    if cfg.get("transcribe"):
+        transcribe_memos()
 
     # (b) is it due at all?
     last = last_success()

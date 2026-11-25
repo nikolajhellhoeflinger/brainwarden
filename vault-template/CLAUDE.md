@@ -278,6 +278,10 @@ garden; it never replaces the plants.
   `search.py` and says how many still find their note in the top three
   (`--record` keeps the score; `add` saves a new question). A miss means a
   note lacks the words people search for — fix the note, not the exam.
+- Voice memos: `python3 .tools/transcribe.py` turns audio files in the inbox into
+  captures, locally (`--check` names the speech engine; `--auto on` lets the
+  runner's tick do it). The recording moves to `90-archive/voice/` and stays
+  embedded in the note — listen before trusting an odd name or number.
 - Unattended weekly review (only if the person asked for it):
   `python3 .tools/autoreview.py install`, then `status` · `run --now` ·
   `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,

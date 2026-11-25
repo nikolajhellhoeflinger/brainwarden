@@ -437,6 +437,22 @@ to feed it from your phone, each with a catch:
    *"capture: [paste]"* to Claude. Costs you one manual step in the
    evening — and nothing else.
 
+**Speaking instead of typing.** A voice memo that lands in `00-inbox/` —
+through any of the ways above, or "Save to Files" from the phone's recorder
+into the synced vault (iPhone: Voice Memos → Share → Save to Files;
+Android: the recorder's Share → the synced folder; Syncthing runs on
+Android, on iPhone Obsidian Sync or iCloud does the moving) — becomes text
+on your computer: `python3 .tools/transcribe.py` turns every m4a/mp3/ogg/…
+in the inbox into an ordinary capture, moves the recording to
+`90-archive/voice/` and embeds it in the note, so the review can listen
+when a sentence looks odd. It uses the first local speech engine it finds
+(mlx-whisper on Apple Silicon, whisper.cpp, faster-whisper, openai-whisper —
+`--check` says which); nothing is uploaded. Run it once by hand (the first
+run downloads the speech model), then `transcribe.py --auto on` lets the
+weekly runner's 20-minute tick do it, so a memo is text in the inbox
+within 20 minutes of reaching the computer. Speech models invent sentences
+on silence; names and numbers are worth a listen.
+
 What we don't promise: real-time sync everywhere, zero-cost + zero-setup
 at once, or running Git itself from the phone (possible via Working
 Copy/MGit, but far more setup than this kit asks of anyone).
