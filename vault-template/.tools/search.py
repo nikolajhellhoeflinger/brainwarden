@@ -342,6 +342,19 @@ def main():
         return 1
     if not terms:
         print("Usage: search.py <term> [term2 ...] [--k N] | --stats"); return 1
+    scored = rank(root, terms)
+    if not scored:
+        print("No hits."); return 0
+    for score, rel, lines in scored[:k]:
+        print(f"\n[{score:5.1f}] {rel}")
+        for l in lines:
+            print(f"        {l}")
+    return 0
+
+def rank(root, terms):
+    """[(score, vault-relative path, sample lines)], best first. The CLI above
+    and exam.py both call this — so the exam measures the very ranking an
+    agent sees, not a copy of it that could drift."""
     terms = [fold(t) for t in terms]
     scored = []
     for path, rel in walk_notes(root):
@@ -358,13 +371,7 @@ def main():
             # subject always wins.
             scored.append((score * (0.5 if is_infra(rel, text) else 1.0), rel, lines))
     scored.sort(key=lambda s: (-s[0], s[1]))
-    if not scored:
-        print("No hits."); return 0
-    for score, rel, lines in scored[:k]:
-        print(f"\n[{score:5.1f}] {rel}")
-        for l in lines:
-            print(f"        {l}")
-    return 0
+    return scored
 
 if __name__ == "__main__":
     sys.exit(main())

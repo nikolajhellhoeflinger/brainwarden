@@ -112,7 +112,7 @@ ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review
     f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS]
 PROTECTED_DIRS = (".tools", ".git", ".obsidian", ".claude")
 DISALLOWED_TOOLS = ["WebFetch", "WebSearch"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
-    "Edit(**/CLAUDE.md)"] + [
+    f"Edit(**/{n})" for n in ("CLAUDE.md", "claude.md", "CLAUDE.local.md", ".mcp.json")] + [
     f"Bash({c} *)" for c in ("curl", "wget", "ssh", "scp", "nc", "git push", "sudo", "bash", "sh",
                              "zsh", "osascript", "launchctl", "crontab", "schtasks", "chmod")]
 NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}']
@@ -621,6 +621,7 @@ def build_prompt(excluded):
 
 # ------------------------------------------------- protected files (backstop)
 RUNNER_OWNED = (".tools/logs/", ".tools/review-exclude.txt")
+LOADED_BY_CLAUDE = {"claude.md", "claude.local.md", ".mcp.json"}
 
 
 def protected():
@@ -637,9 +638,10 @@ def protected():
             rel = p.relative_to(VAULT).as_posix()
             if not p.is_file() or "__pycache__" in rel or rel.startswith(RUNNER_OWNED):
                 continue
-            # An open Obsidian rewrites its own state all the time; only what
-            # it EXECUTES is guarded: plugin code and manifests, not data.json.
-            if rel.startswith(".obsidian/") and (p.name == "data.json" or p.suffix not in (".js", ".json", ".css")):
+            # A plugin's data.json is rewritten by an open Obsidian all the
+            # time, so it cannot raise an alarm — but some plugins run
+            # commands stored in it. It is restored instead (plugin_settings).
+            if rel.startswith(".obsidian/") and p.name == "data.json":
                 continue
             out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
     # The plugin switch list, and git's config — `core.hooksPath` there would
@@ -647,17 +649,44 @@ def protected():
     for rel in (".obsidian/community-plugins.json", ".git/config"):
         if (VAULT / rel).is_file():
             out[rel] = hashlib.sha256((VAULT / rel).read_bytes()).hexdigest()
-    for p in VAULT.rglob("CLAUDE.md"):
+    # Every file Claude Code reads as instructions or configuration, matched
+    # in ANY letter case: on macOS and Windows `claude.md` IS `CLAUDE.md`.
+    for p in VAULT.rglob("*"):
         rel = p.relative_to(VAULT).as_posix()
-        if not rel.startswith(".git/"):
+        if p.is_file() and p.name.lower() in LOADED_BY_CLAUDE and not rel.startswith(".git/"):
             out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
     return out
+
+
+def plugin_settings():
+    return {p.relative_to(VAULT).as_posix(): p.read_bytes()
+            for p in (VAULT / ".obsidian" / "plugins").glob("*/data.json")} \
+        if (VAULT / ".obsidian" / "plugins").is_dir() else {}
+
+
+def restore_plugin_settings(saved):
+    """Put every plugin's data.json back the way it was before the run. A run
+    has no business changing them; an open Obsidian keeps its own settings in
+    memory and writes them again, so nothing legitimate is lost — but a
+    command smuggled into one is gone before Obsidian next loads it."""
+    reset = []
+    for rel, data in saved.items():
+        p = VAULT / rel
+        if not p.exists() or p.read_bytes() != data:
+            p.write_bytes(data)
+            reset.append(rel)
+    for p in (VAULT / ".obsidian" / "plugins").glob("*/data.json") if (VAULT / ".obsidian" / "plugins").is_dir() else []:
+        rel = p.relative_to(VAULT).as_posix()
+        if rel not in saved:
+            p.unlink()
+            reset.append(rel)
+    return reset
 
 
 def harmless(rel, before):
     """The one change to a CLAUDE.md the review makes on purpose: a NEW folder
     gets a CLAUDE.md that only pulls in its index.md. Anything else is not."""
-    if rel in before or not rel.endswith("CLAUDE.md"):
+    if rel in before or Path(rel).name.lower() != "claude.md":
         return False
     try:
         return (VAULT / rel).read_text(encoding="utf-8").strip() == "@index.md"
@@ -709,7 +738,7 @@ def vault_path(arg):
         rel = p.relative_to(VAULT.resolve())
     except ValueError:
         raise SystemExit(f"refused: {arg} is outside the vault")
-    if not rel.parts or rel.parts[0] in PROTECTED_DIRS or p.name == "CLAUDE.md":
+    if not rel.parts or rel.parts[0].lower() in PROTECTED_DIRS or p.name.lower() in LOADED_BY_CLAUDE:
         raise SystemExit(f"refused: {arg} is a kit file")
     return p
 
@@ -883,10 +912,13 @@ def _run_locked(cfg, cmd, days, idle):
         commit_all(f"Weekly run {stamp}: notes set aside before it started")
     # Step 2: the run, and at most one retry for a plain failure
     prompt = build_prompt(excluded)
-    before, saved_hooks = protected(), hooks_copy()
+    before, saved_hooks, saved_plugins = protected(), hooks_copy(), plugin_settings()
     offset = log_offset()
     say("review starts")
     status, took = run_claude(cmd, prompt, cfg)
+    reset = restore_plugin_settings(saved_plugins)
+    if reset:
+        say("plugin settings put back as they were before the run: " + ", ".join(reset))
     after = protected()
     changed = sorted(k for k in set(before) | set(after)
                      if before.get(k) != after.get(k) and not harmless(k, before))

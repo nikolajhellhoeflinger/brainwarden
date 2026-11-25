@@ -214,12 +214,18 @@ each one the answer to a run that really failed:
   whatever landed in your inbox — pasted web text included. So the model
   gets only the vault's own three tools and a move/delete that cannot leave
   the vault: no free shell, no git, no web, no MCP servers, no writes to
-  kit files, Git hooks, Obsidian plugins or any `CLAUDE.md`. And because a
-  permission list is only as good as the CLI that reads it, the runner
-  also fingerprints all of those files before the run: if any changed, the
-  whole run is rolled back and `!Review failed.md` tells you to look for a
-  note with text aimed at the AI. Read-only commands Claude Code always
-  allows (like `git log`) stay possible — they change nothing.
+  kit files, Git hooks or config, Obsidian plugins, `.mcp.json` or any
+  `CLAUDE.md` (in any letter case — on macOS and Windows `claude.md` is the
+  same file). And because a permission list is only as good as the CLI that
+  reads it, the runner also fingerprints all of those files before the run:
+  if any changed, the whole run is rolled back and `!Review failed.md`
+  tells you to look for a note with text aimed at the AI. Plugin settings
+  (`data.json`, which some plugins run commands from) are simply put back
+  as they were. Read-only commands Claude Code always allows (like
+  `git log`) stay possible — they change nothing. What no runner can
+  prevent: text from a note ending up in a signpost or in Home, which a
+  later session reads. That is content, not code — and a session you sit
+  in asks before it acts.
 - **`status`** says when it last ran and why not since. `uninstall`
   removes the schedule and nothing else.
 
