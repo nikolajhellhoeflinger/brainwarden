@@ -262,7 +262,32 @@ import os, pathlib, sys
 count = pathlib.Path(os.environ["FAKE_COUNT"])
 count.write_text(str(int(count.read_text() or 0) + 1 if count.exists() else 1))
 pathlib.Path(os.environ["FAKE_PROMPT"]).write_text(sys.argv[sys.argv.index("-p") + 1], encoding="utf-8")
+pathlib.Path(os.environ["FAKE_PROMPT"] + ".argv").write_text("\n".join(sys.argv), encoding="utf-8")
 mode = os.environ.get("FAKE_MODE", "ok")
+if mode == "inject":                  # what a note smuggling instructions could make a model do
+    with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
+        fh.write("\n# planted\n")
+    pathlib.Path(".git", "hooks", "post-commit").write_text("#!/bin/sh\necho planted\n", encoding="utf-8")
+    pathlib.Path(".git", "hooks", "pre-push").write_text("#!/bin/sh\necho planted\n", encoding="utf-8")
+    with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
+        fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
+    pathlib.Path(".obsidian", "plugins", "evil").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".obsidian", "plugins", "evil", "main.js").write_text("planted()", encoding="utf-8")
+    pathlib.Path("30-knowledge", "tools.md").write_text("rewritten by the run\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "inject-config":           # the quietest version: only git's config
+    with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
+        fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
+    sys.exit(0)
+if mode == "benign":                  # Obsidian open, a new folder with its pointer — all legitimate
+    pathlib.Path(".obsidian").mkdir(exist_ok=True)
+    pathlib.Path(".obsidian", "workspace.json").write_text("{}", encoding="utf-8")
+    pathlib.Path(".obsidian", "plugins", "sync").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".obsidian", "plugins", "sync", "data.json").write_text('{"last": 2}', encoding="utf-8")
+    pathlib.Path("10-projects", "trip").mkdir(parents=True, exist_ok=True)
+    pathlib.Path("10-projects", "trip", "index.md").write_text("# trip\n", encoding="utf-8")
+    pathlib.Path("10-projects", "trip", "CLAUDE.md").write_text("@index.md\n", encoding="utf-8")
+    sys.exit(0)
 if mode == "ok":                      # what a review does: file the capture
     src = pathlib.Path("00-inbox", "2026-01-01-thought.md")
     if src.exists():
@@ -384,6 +409,56 @@ def check_autoreview(tmp):
     # 5. the next success clears the notice
     if ar("run", "--now").returncode or exists("00-inbox/!Review failed.md"):
         return bad(label, "a successful run did not clear the failure notice")
+
+    # 5b. what the unattended model is allowed: no general python, no git, no MCP
+    argv = open(prompt + ".argv", encoding="utf-8").read().splitlines()
+    allowed = argv[argv.index("--allowedTools") + 1:argv.index("--disallowedTools")] \
+        if "--allowedTools" in argv and "--disallowedTools" in argv else []
+    # (measured on the real CLI: acceptEdits let `echo x > file` through, and a
+    # bare Write/Edit/Read rule reached outside the vault)
+    wide = [a for a in allowed if a in ("Bash", "Read", "Edit", "Write", "Bash(python3 *)", "Bash(git *)",
+                                        "Bash(mv *)") or (a.startswith(("Read(", "Edit(")) and a not in ("Read(./**)", "Edit(./**)"))]
+    offered = argv[argv.index("--tools") + 1].split(",") if "--tools" in argv else ["(everything)"]
+    mode_ = argv[argv.index("--permission-mode") + 1] if "--permission-mode" in argv else "?"
+    if not allowed or wide or "--strict-mcp-config" not in argv or mode_ != "default" \
+            or not set(offered) <= {"Read", "Edit", "Write", "Glob", "Grep", "Bash", "Skill"}:
+        return bad(label, f"the unattended model gets too much: {wide or (mode_, offered)}")
+
+    # 5c. a run that touches kit files is rolled back whole — not just the files
+    write(".git/hooks/pre-push", "#!/bin/sh\necho original\n")       # a hook the person set up
+    write(".obsidian/plugins/sync/main.js", "sync()")                    # and a plugin they use
+    write(".obsidian/plugins/sync/data.json", '{"last": 1}')
+    hyg_before = read(".tools/hygiene.py")
+    tools_before = read("30-knowledge/tools.md")
+    r = ar("run", "--now", mode="inject")
+    if r.returncode != 3 or read(".tools/hygiene.py") != hyg_before \
+            or exists(".git/hooks/post-commit") or read(".git/hooks/pre-push") != "#!/bin/sh\necho original\n" \
+            or exists(".obsidian/plugins/evil/main.js") or read("30-knowledge/tools.md") != tools_before \
+            or "planted-hooks" in read(".git/config"):
+        return bad(label, f"a run that planted code was not rolled back (exit {r.returncode})")
+    if "rolled back" not in read("00-inbox/!Review failed.md") or "rolled back" not in log():
+        return bad(label, "a rolled-back run left no notice")
+
+    r = ar("run", "--now", mode="inject-config")
+    if r.returncode != 3 or "planted-hooks" in read(".git/config"):
+        return bad(label, f"a run that only redirected git hooks was not caught (exit {r.returncode})")
+
+    # 5d. and a legitimate run with Obsidian open and a new folder is NOT
+    if ar("run", "--now", mode="benign").returncode or exists("00-inbox/!Review failed.md"):
+        return bad(label, "open Obsidian or a new folder's CLAUDE.md pointer counted as tampering")
+
+    # 5e. move/delete for the model: inside the vault, never kit files
+    write("00-inbox/2026-01-04-move-me.md", "x\n")
+    if ar("move", "00-inbox/2026-01-04-move-me.md", "30-knowledge/moved.md").returncode \
+            or not exists("30-knowledge/moved.md"):
+        return bad(label, "move inside the vault failed")
+    refused = [a for a in (("move", "30-knowledge/moved.md", "../outside.md"),
+                           ("delete", ".tools/hygiene.py"), ("delete", "CLAUDE.md"))
+               if ar(*a).returncode == 0]
+    if refused or not exists(".tools/hygiene.py") or exists(os.path.join("..", "outside.md")):
+        return bad(label, f"move/delete reached outside the vault or into the kit: {refused}")
+    if ar("delete", "30-knowledge/moved.md").returncode or exists("30-knowledge/moved.md"):
+        return bad(label, "delete of a note failed")
 
     # 6. one at a time; an orphaned lock is cleared, not obeyed
     before = calls()

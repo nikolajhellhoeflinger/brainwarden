@@ -210,6 +210,16 @@ each one the answer to a run that really failed:
   safeguards stop the whole headless run. Such captures move to
   `00-inbox/.set-aside/` and are listed in `Set aside.md`; the word list is
   `.tools/set-aside-terms.txt`, and `set-aside --restore` brings them back.
+- **A note cannot take over the run.** Nobody watches it, and it reads
+  whatever landed in your inbox — pasted web text included. So the model
+  gets only the vault's own three tools and a move/delete that cannot leave
+  the vault: no free shell, no git, no web, no MCP servers, no writes to
+  kit files, Git hooks, Obsidian plugins or any `CLAUDE.md`. And because a
+  permission list is only as good as the CLI that reads it, the runner
+  also fingerprints all of those files before the run: if any changed, the
+  whole run is rolled back and `!Review failed.md` tells you to look for a
+  note with text aimed at the AI. Read-only commands Claude Code always
+  allows (like `git log`) stay possible — they change nothing.
 - **`status`** says when it last ran and why not since. `uninstall`
   removes the schedule and nothing else.
 
