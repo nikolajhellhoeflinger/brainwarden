@@ -282,6 +282,27 @@ if mode == "inject":                  # what a note smuggling instructions could
     pathlib.Path(".obsidian", "plugins", "evil", "main.js").write_text("planted()", encoding="utf-8")
     pathlib.Path("30-knowledge", "tools.md").write_text("rewritten by the run\n", encoding="utf-8")
     sys.exit(0)
+if mode == "nested-claude":           # settings for whoever starts Claude in a subfolder later
+    pathlib.Path("10-projects", "x", ".claude").mkdir(parents=True, exist_ok=True)
+    pathlib.Path("10-projects", "x", ".claude", "settings.json").write_text('{"hooks": "planted"}', encoding="utf-8")
+    sys.exit(0)
+if mode == "dir-settings":            # a plugin's data.json swapped for a folder: the restore must not crash open
+    d = pathlib.Path(".obsidian", "plugins", "sync", "data.json")
+    d.unlink()
+    d.mkdir()
+    (d / "x").write_text("x", encoding="utf-8")
+    pathlib.Path(".tools", "hygiene.py").write_text("planted", encoding="utf-8")
+    sys.exit(0)
+if mode == "file-for-folder":         # the plugin folder itself swapped for a file: restoring MUST fail
+    import shutil
+    shutil.rmtree(pathlib.Path(".obsidian", "plugins", "sync"))
+    pathlib.Path(".obsidian", "plugins", "sync").write_text("not a folder", encoding="utf-8")
+    sys.exit(0)
+if mode == "symlink-settings":        # data.json pointed at a file OUTSIDE the vault
+    d = pathlib.Path(".obsidian", "plugins", "sync", "data.json")
+    d.unlink()
+    os.symlink(os.environ["FAKE_TARGET"], d)
+    sys.exit(0)
 if mode == "inject-config":           # the quietest version: only git's config
     with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
         fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
@@ -453,6 +474,37 @@ def check_autoreview(tmp):
     if r.returncode != 3 or "planted-hooks" in read(".git/config"):
         return bad(label, f"a run that only redirected git hooks was not caught (exit {r.returncode})")
 
+    r = ar("run", "--now", mode="nested-claude")
+    if r.returncode != 3 or exists("10-projects/x/.claude/settings.json"):
+        return bad(label, f"a .claude folder below the vault root went unnoticed (exit {r.returncode})")
+    r = ar("run", "--now", mode="dir-settings")
+    if r.returncode != 3 or "Traceback" in r.stderr or read(".tools/hygiene.py") != hyg_before \
+            or read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
+        return bad(label, f"a broken plugin-settings file let the check fail open (exit {r.returncode}) "
+                          f"{r.stderr.strip()[-120:]}")
+
+    r = ar("run", "--now", mode="file-for-folder")
+    if r.returncode != 3 or "Traceback" in r.stderr or "check itself failed" not in read("00-inbox/!Review failed.md"):
+        return bad(label, f"when its own check broke, the run did not fail closed (exit {r.returncode}) "
+                          f"{r.stderr.strip()[-120:]}")
+    if read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
+        return bad(label, "after failing closed, the plugin folder was not restored")
+
+    target = os.path.join(tmp, "outside-target.txt")
+    with open(target, "w", encoding="utf-8") as fh:
+        fh.write("SAFE")
+    try:
+        os.symlink(target, os.path.join(tmp, "symlink-probe"))
+        can_link = True
+    except (OSError, NotImplementedError):
+        can_link = False                     # Windows without the right to create symlinks
+    if can_link:
+        ar("run", "--now", mode="symlink-settings", FAKE_TARGET=target)
+        settings = os.path.join(vault, ".obsidian", "plugins", "sync", "data.json")
+        if open(target, encoding="utf-8").read() != "SAFE" or os.path.islink(settings) \
+                or read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
+            return bad(label, "restoring plugin settings wrote through a symlink to a file outside the vault")
+
     # 5d. and a legitimate run with Obsidian open and a new folder is NOT
     if ar("run", "--now", mode="benign").returncode or exists("00-inbox/!Review failed.md"):
         return bad(label, "open Obsidian or a new folder's CLAUDE.md pointer counted as tampering")
@@ -468,6 +520,7 @@ def check_autoreview(tmp):
                            ("move", "30-knowledge/moved.md", "30-knowledge/Claude.md"),
                            ("move", "30-knowledge/moved.md", ".mcp.json"),
                            ("move", "30-knowledge/moved.md", ".TOOLS/x.md"),
+                           ("move", "30-knowledge/moved.md", "30-knowledge/.claude/commands/x.md"),
                            ("delete", ".tools/hygiene.py"), ("delete", "CLAUDE.md"))
                if ar(*a).returncode == 0]
     if refused or not exists(".tools/hygiene.py") or exists(os.path.join("..", "outside.md")):

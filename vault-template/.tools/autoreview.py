@@ -111,7 +111,7 @@ VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "autoreview.py move ", "
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
     f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS]
 PROTECTED_DIRS = (".tools", ".git", ".obsidian", ".claude")
-DISALLOWED_TOOLS = ["WebFetch", "WebSearch"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
+DISALLOWED_TOOLS = ["WebFetch", "WebSearch", "Edit(**/.claude/**)"] + [f"Edit({d}/**)" for d in PROTECTED_DIRS] + [
     f"Edit(**/{n})" for n in ("CLAUDE.md", "claude.md", "CLAUDE.local.md", ".mcp.json")] + [
     f"Bash({c} *)" for c in ("curl", "wget", "ssh", "scp", "nc", "git push", "sudo", "bash", "sh",
                              "zsh", "osascript", "launchctl", "crontab", "schtasks", "chmod")]
@@ -651,17 +651,29 @@ def protected():
             out[rel] = hashlib.sha256((VAULT / rel).read_bytes()).hexdigest()
     # Every file Claude Code reads as instructions or configuration, matched
     # in ANY letter case: on macOS and Windows `claude.md` IS `CLAUDE.md`.
+    # A `.claude` folder counts at ANY depth: start Claude in a subfolder later
+    # and it loads that folder's settings and commands.
     for p in VAULT.rglob("*"):
         rel = p.relative_to(VAULT).as_posix()
-        if p.is_file() and p.name.lower() in LOADED_BY_CLAUDE and not rel.startswith(".git/"):
+        if not p.is_file() or rel.startswith(".git/"):
+            continue
+        if p.name.lower() in LOADED_BY_CLAUDE or ".claude" in (s.lower() for s in p.relative_to(VAULT).parts[:-1]):
             out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
     return out
 
 
 def plugin_settings():
-    return {p.relative_to(VAULT).as_posix(): p.read_bytes()
-            for p in (VAULT / ".obsidian" / "plugins").glob("*/data.json")} \
-        if (VAULT / ".obsidian" / "plugins").is_dir() else {}
+    root = VAULT / ".obsidian" / "plugins"
+    return {p.relative_to(VAULT).as_posix(): p.read_bytes() for p in root.glob("*/data.json")
+            if p.is_file() and not p.is_symlink()} if root.is_dir() else {}
+
+
+def remove(p):
+    """Gone, whatever it is now: a file, a symlink (never followed) or a folder."""
+    if p.is_symlink() or p.is_file():
+        p.unlink()
+    elif p.is_dir():
+        shutil.rmtree(p)
 
 
 def restore_plugin_settings(saved):
@@ -672,13 +684,18 @@ def restore_plugin_settings(saved):
     reset = []
     for rel, data in saved.items():
         p = VAULT / rel
+        # a symlink in its place is removed, never written through: writing
+        # "the old settings" into wherever it points would be the attack
+        if p.is_symlink() or p.is_dir():
+            remove(p)
         if not p.exists() or p.read_bytes() != data:
             p.write_bytes(data)
             reset.append(rel)
-    for p in (VAULT / ".obsidian" / "plugins").glob("*/data.json") if (VAULT / ".obsidian" / "plugins").is_dir() else []:
+    root = VAULT / ".obsidian" / "plugins"
+    for p in root.glob("*/data.json") if root.is_dir() else []:
         rel = p.relative_to(VAULT).as_posix()
         if rel not in saved:
-            p.unlink()
+            remove(p)
             reset.append(rel)
     return reset
 
@@ -738,7 +755,8 @@ def vault_path(arg):
         rel = p.relative_to(VAULT.resolve())
     except ValueError:
         raise SystemExit(f"refused: {arg} is outside the vault")
-    if not rel.parts or rel.parts[0].lower() in PROTECTED_DIRS or p.name.lower() in LOADED_BY_CLAUDE:
+    if not rel.parts or any(s.lower() in PROTECTED_DIRS for s in rel.parts) \
+            or p.name.lower() in LOADED_BY_CLAUDE:
         raise SystemExit(f"refused: {arg} is a kit file")
     return p
 
@@ -916,12 +934,18 @@ def _run_locked(cfg, cmd, days, idle):
     offset = log_offset()
     say("review starts")
     status, took = run_claude(cmd, prompt, cfg)
-    reset = restore_plugin_settings(saved_plugins)
-    if reset:
-        say("plugin settings put back as they were before the run: " + ", ".join(reset))
-    after = protected()
-    changed = sorted(k for k in set(before) | set(after)
-                     if before.get(k) != after.get(k) and not harmless(k, before))
+    try:
+        reset = restore_plugin_settings(saved_plugins)
+        if reset:
+            say("plugin settings put back as they were before the run: " + ", ".join(reset))
+        after = protected()
+        changed = sorted(k for k in set(before) | set(after)
+                         if before.get(k) != after.get(k) and not harmless(k, before))
+    except Exception as e:      # noqa: BLE001 — fail CLOSED
+        # A check that cannot look has to assume the worst. Letting the
+        # exception through would skip the comparison and keep the changes.
+        say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
+        changed = [f"(the check itself failed: {e.__class__.__name__})"]
     if changed:
         return _tampered(stamp, base, before, saved_hooks, changed)
     flagged = flagged_since(offset)
