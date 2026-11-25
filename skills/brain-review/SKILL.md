@@ -161,8 +161,11 @@ Trigger-based, not scheduled; say in the report which ones ran.
   propose renaming or archiving an area/folder that no longer matches the person's life.
 - **Maps of content** (past ~150 notes — `python3 <vault>/.tools/search.py --stats`): propose one
   map per strand, 2–3 sentences of framing each, never a bare list of links.
-- **Random revisit** (whenever the review ran short): open ONE random older note. Stale? Missing an
-  obvious link? A near-twin to merge? One concrete improvement.
+- **Revisit by context** (whenever the review ran short): `python3 <vault>/.tools/search.py --resurface`
+  lists older notes linked with what changed this week and untouched for two months — the
+  decision behind a project that moves again, the person behind a new capture. Open ONE (no list
+  output: one random older note). Stale? Missing an obvious link? A near-twin to merge? One
+  concrete improvement.
 
 ## Work mode (only when the vault `CLAUDE.md` names the mode `professional`)
 - **Nothing stays `ownership: mixed`** — split or reclassify every mixed note from this week now.

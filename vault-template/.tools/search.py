@@ -4,6 +4,7 @@
     python3 ~/Brain/.tools/search.py real-rates gold
     python3 ~/Brain/.tools/search.py "chilling effect" --k 5
     python3 ~/Brain/.tools/search.py --stats
+    python3 ~/Brain/.tools/search.py --resurface   # older notes tied to this week's
 
 Scoring per file and term:
 
@@ -123,7 +124,7 @@ def parse_args(argv):
                 pass
             i += 2
             continue
-        if a.startswith("--") and a != "--stats":
+        if a.startswith("--") and a not in ("--stats", "--resurface"):
             # Anything else starting with `--` used to vanish without a word,
             # so `search.py --root /other/vault gold` searched THIS vault for
             # "gold" and looked like it had honoured the flag. There is no
@@ -380,10 +381,97 @@ def score_file(text, name, terms):
         score += BODY_CAP * hits / (hits + BODY_HALF) + inside_score
     return score, (starts + insides)[:3]
 
+LINK_RE = re.compile(r"\[\[([^\]|#]+)|\]\(([^)#\s]+\.md)\)")
+
+
+def last_changes(root):
+    """{relpath: date of its last commit} in one pass over the history —
+    file times lie (a fresh clone sets every one of them to today)."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", root, "log", "--format=@%as", "--name-only", "--no-renames"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=30).stdout
+    except Exception:
+        return {}
+    seen, day = {}, None
+    for line in out.splitlines():
+        if line.startswith("@"):
+            day = line[1:]
+        elif line.strip() and day:
+            seen.setdefault(line.strip().strip('"'), day)
+    return seen
+
+
+def resurface(root, k=3, days=7, quiet=60):
+    """--resurface: the older notes connected to what this week is about.
+    A random revisit opens a note nobody needs this week; this one opens the
+    note that THIS week's notes link to, or that links to them, and that has
+    not been touched for two months — the decision behind a project that is
+    moving again, the person note behind a new capture."""
+    import datetime
+    top = subprocess_top(root)       # realpath("") would be the CURRENT folder, i.e. the vault itself
+    if not top or os.path.realpath(top) != os.path.realpath(root):
+        print("--resurface needs the vault's own git history (it is what says what changed when)")
+        return 1
+    changed = last_changes(root)
+    today = datetime.date.today()
+    age = lambda rel: (today - datetime.date.fromisoformat(changed[rel])).days if rel in changed else None
+    notes = {rel.replace(os.sep, "/"): path for path, rel in walk_notes(root)}
+    by_stem = {}
+    for rel in notes:
+        by_stem.setdefault(fold(os.path.splitext(os.path.basename(rel))[0]), rel)
+    skip = lambda rel: is_infra(rel) or os.path.basename(rel).lower() in ("index.md", "claude.md") \
+        or rel.split("/")[0].startswith("00-")
+    week = {rel for rel in notes if not skip(rel) and age(rel) is not None and age(rel) <= days}
+    if not week:
+        print(f"nothing changed in the last {days} days — nothing to resurface from")
+        return 0
+
+    def targets(rel):
+        out = set()
+        for m in LINK_RE.finditer(read(notes[rel])):
+            name = m.group(1) or m.group(2)
+            hit = by_stem.get(fold(os.path.splitext(os.path.basename(name.strip()))[0]))
+            if hit and hit != rel:
+                out.add(hit)
+        return out
+
+    links = {rel: targets(rel) for rel in notes if not skip(rel)}
+    ties = {}
+    for rel, outs in links.items():
+        for t in outs:
+            if rel in week and t not in week:
+                ties.setdefault(t, set()).add(rel)
+            if t in week and rel not in week:
+                ties.setdefault(rel, set()).add(t)
+    cands = [(rel, why) for rel, why in ties.items() if not skip(rel) and (age(rel) or 0) >= quiet]
+    if not cands:
+        print(f"no older note is linked with this week's {len(week)} changed notes")
+        return 0
+    cands.sort(key=lambda c: (-len(c[1]), -(age(c[0]) or 0)))
+    print(f"older notes tied to this week ({len(week)} notes changed in {days} days):")
+    for rel, why in cands[:k]:
+        print(f"  {rel} — untouched for {age(rel)} days — linked with {', '.join(sorted(why)[:3])}")
+    return 0
+
+
+def subprocess_top(root):
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"], capture_output=True,
+                           text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if "--stats" in sys.argv[1:]:
         return stats(root)
+    if "--resurface" in sys.argv[1:]:
+        return resurface(root)
     terms, k = parse_args(sys.argv[1:])
     if terms is None:               # unknown option — already explained
         return 1

@@ -122,9 +122,14 @@ def python_has(module):
         return False
 
 
-def run_text(argv, cwd=None):
-    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                       timeout=TIMEOUT, cwd=cwd, stdin=subprocess.DEVNULL)
+def run_text(argv):
+    """Every engine runs in an empty folder of its own. `python -c` puts the
+    current folder first on the import path, and the vault is a folder the
+    unattended review writes into: a planted `faster_whisper.py` there would
+    run with the next tick's rights."""
+    with tempfile.TemporaryDirectory() as neutral:
+        r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=TIMEOUT, cwd=neutral, stdin=subprocess.DEVNULL)
     if r.returncode:
         raise RuntimeError((r.stderr or r.stdout).strip()[-300:] or f"exit {r.returncode}")
     return r.stdout
@@ -151,7 +156,8 @@ def whisper_cpp(audio, lang, model):
             if not shutil.which("ffmpeg"):
                 raise RuntimeError(f"whisper.cpp cannot read {audio.suffix} without ffmpeg")
             source = Path(tmp) / "memo.wav"
-            run_text(["ffmpeg", "-loglevel", "error", "-i", str(audio), "-ar", "16000", "-ac", "1", str(source)])
+            run_text(["ffmpeg", "-loglevel", "error", "-protocol_whitelist", "file,pipe", "-i", str(audio),
+                      "-ar", "16000", "-ac", "1", str(source)])
         argv = ["whisper-cli", "-m", model, "-f", str(source), "-otxt", "-of", str(Path(tmp) / "out"), "-np"]
         return via_txt(argv + (["-l", lang] if lang else []), tmp, "out")
 
@@ -186,6 +192,27 @@ def memos():
 
 
 UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+
+
+def is_audio(path):
+    """Only real audio containers reach a decoder. Decoders sniff the content,
+    not the name: a TEXT file called memo.m4a holding a playlist (#EXTM3U …)
+    or an ffconcat list makes ffmpeg — which mlx-whisper and openai-whisper
+    call — fetch the URLs or read the files it lists. Anything that can write
+    a text file into the inbox could use that to send vault text to a URL.
+    A real recording starts with its container's signature; a text file
+    does not get past this."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return False
+    return (head[4:8] == b"ftyp"                                  # m4a, mp4, 3gp (iPhone, Android)
+            or head[:4] in (b"OggS", b"fLaC", b"caff", b"\x1aE\xdf\xa3")   # ogg/opus, flac, caf, webm/mkv
+            or head[:3] == b"ID3" or (head[:1] == b"\xff" and head[1:2] and head[1] & 0xE0 == 0xE0)  # mp3, aac
+            or (head[:4] == b"RIFF" and head[8:12] == b"WAVE")
+            or (head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"))
+            or head[:5] == b"#!AMR")
 
 
 def slug(text, words=6):
@@ -290,6 +317,10 @@ def main(argv=None):
     lang = a.language or cfg.get("language")
     failed = 0
     for audio in pending:
+        if not is_audio(audio):
+            if not a.quiet:
+                print(f"{audio.name}: not an audio recording by its content — left alone, not decoded")
+            continue
         try:
             note = transcribe_one(audio, name, fn, lang, archive)
             print(f"{audio.name} → {note.relative_to(VAULT).as_posix()}")

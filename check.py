@@ -480,10 +480,12 @@ def check_project_context(tmp):
 
 
 FAKE_STT = r'''
-import sys
-text = open(sys.argv[1], encoding="utf-8").read()
+import os, sys
+text = open(sys.argv[1], "rb").read()[4:].decode("utf-8")      # after the container signature
 if "FAIL" in text:
     sys.exit("engine crashed")
+if "CWD" in text:
+    text = "working in " + os.getcwd()
 print("" if "SILENT" in text else text)
 '''
 
@@ -511,13 +513,21 @@ def check_transcribe(tmp):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
 
+    def audio(rel, text):            # a recording: the Ogg signature, then what the fake engine "hears"
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(b"OggS" + text.encode("utf-8"))
+
     inbox = lambda: sorted(f for f in os.listdir(os.path.join(vault, "00-inbox")) if "-voice-" in f)
     exists = lambda rel: os.path.exists(os.path.join(vault, *rel.split("/")))
     if tr("--check").stdout.strip() != "engine: your command":
         return bad(label, "--check does not name the configured engine")
-    put("00-inbox/Neue Aufnahme.m4a", "Idee für Hotels in Tirol, zuerst die mit Kinderkino. Zweiter Satz.")
-    put("00-inbox/bad.ogg", "FAIL")
-    put("00-inbox/voice/quiet.opus", "SILENT")
+    audio("00-inbox/Neue Aufnahme.m4a", "Idee für Hotels in Tirol, zuerst die mit Kinderkino. Zweiter Satz.")
+    audio("00-inbox/bad.ogg", "FAIL")
+    audio("00-inbox/voice/quiet.opus", "SILENT")
+    # text dressed as audio: a playlist would make ffmpeg fetch its URLs — it must reach no engine
+    put("00-inbox/planted.m4a", "#EXTM3U\n#EXTINF:1,\nhttps://example.invalid/?leak=vault-text\n")
     r = tr()
     notes = inbox()
     good = [n for n in notes if "idee-fuer-hotels-in-tirol" in n]
@@ -531,6 +541,8 @@ def check_transcribe(tmp):
         return bad(label, "the transcribed recording was not moved next to the archive")
     if not exists("00-inbox/bad.ogg") or exists("90-archive/voice/bad.ogg"):
         return bad(label, "a memo the engine failed on was moved or lost instead of left for the next try")
+    if not exists("00-inbox/planted.m4a") or "planted.m4a" not in r.stdout or "not an audio recording" not in r.stdout:
+        return bad(label, "a text file named .m4a was handed to the speech engine")
     quiet = [n for n in notes if n not in good]
     if "No speech recognised" not in open(os.path.join(vault, "00-inbox", quiet[0]), encoding="utf-8").read():
         return bad(label, "a silent recording did not say so")
@@ -541,10 +553,18 @@ def check_transcribe(tmp):
     if "Neue Aufnahme" in hyg:
         return bad(label, "hygiene reports the embedded recording as a dead link")
     os.remove(os.path.join(vault, "00-inbox", "bad.ogg"))
+    os.remove(os.path.join(vault, "00-inbox", "planted.m4a"))
+    # the engine runs in an empty folder: `python -c` would import modules planted in the vault
+    audio("00-inbox/cwd.m4a", "CWD")
+    tr()
+    cwd_note = [n for n in inbox() if "working-in" in n]
+    where = open(os.path.join(vault, "00-inbox", cwd_note[0]), encoding="utf-8").read() if cwd_note else ""
+    if not cwd_note or os.path.realpath(vault) in where or vault in where:
+        return bad(label, f"the speech engine ran inside the vault: {where[:160]!r}")
     # no engine at all: nothing happens, nothing is lost, and it says why
     bare = {k: v for k, v in os.environ.items() if k != "BRAINWARDEN_TRANSCRIBER"}
     bare["PATH"] = os.path.join(tmp, "empty-path")
-    put("00-inbox/later.m4a", "for later")
+    audio("00-inbox/later.m4a", "for later")
     r = tr(env_=bare)
     if r.returncode != 0 or "no speech engine" not in r.stdout or not exists("00-inbox/later.m4a") \
             or tr("--check", env_=bare).returncode != 1:
@@ -564,6 +584,50 @@ def check_transcribe(tmp):
     r = tick()
     if r.returncode or exists("00-inbox/later.m4a") or not [n for n in inbox() if "for-later" in n]:
         return bad(label, f"the switched-on tick left the memo: exit {r.returncode} {r.stderr.strip()[-120:]}")
+    ok(label)
+
+
+def check_resurface(tmp):
+    """search.py --resurface: the old notes this week's notes are linked with
+    — in either direction — and only the ones untouched for two months."""
+    label = "resurface by context"
+    vault = os.path.join(tmp, "resvault")
+    assemble(vault, "personal")
+    D = __import__("datetime")
+    ago = lambda n: (D.date.today() - D.timedelta(days=n)).isoformat() + "T12:00:00"
+    env = dict(os.environ, GIT_AUTHOR_NAME="c", GIT_AUTHOR_EMAIL="c@example.invalid",
+               GIT_COMMITTER_NAME="c", GIT_COMMITTER_EMAIL="c@example.invalid")
+
+    def put(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def commit(msg, days):
+        subprocess.run(["git", "add", "-A"], cwd=vault, env=env, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", msg], cwd=vault, capture_output=True,
+                       env=dict(env, GIT_AUTHOR_DATE=ago(days), GIT_COMMITTER_DATE=ago(days)))
+
+    search = [sys.executable, os.path.join(vault, ".tools", "search.py"), "--resurface"]
+    r = subprocess.run(search, cwd=vault, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 1 or "git history" not in r.stdout:
+        return bad(label, "without a git history it did not say so")
+    subprocess.run(["git", "init", "-q"], cwd=vault, capture_output=True)
+    put("40-decisions/2020-01-01-why-shop.md", "# Why the shop\n\nBecause.\n")
+    put("30-knowledge/Old-Backlink.md", "# Old backlink\n\nSee [[Week-Note]] once it exists.\n")
+    put("30-knowledge/Unrelated.md", "# Unrelated\n\nNothing to do with it.\n")
+    commit("old notes", 400)
+    put("30-knowledge/Fresh-Link.md", "# Fresh\n\nTouched recently.\n")
+    commit("fresh", 10)
+    put("10-projects/Week-Note.md", "# Week note\n\nBuilt on [[2020-01-01-why-shop]] and [[Fresh-Link]].\n")
+    put("00-inbox/2026-01-01-capture.md", "a capture mentioning [[Unrelated]]\n")
+    commit("this week", 1)
+    out = subprocess.run(search, cwd=vault, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    want = ["40-decisions/2020-01-01-why-shop.md", "30-knowledge/Old-Backlink.md"]
+    stray = ["Unrelated", "Fresh-Link"]
+    if [w for w in want if w not in out] or [s_ for s_ in stray if s_ in out]:
+        return bad(label, f"wrong notes resurfaced: {out.strip()[:300]!r}")
     ok(label)
 
 
@@ -1638,6 +1702,7 @@ def main():
         check_project_context(tmp)
         check_transcribe(tmp)
         check_people(tmp)
+        check_resurface(tmp)
         check_autoreview(tmp)
         check_exam(tmp)
         check_mode_guard(tmp)
