@@ -25,6 +25,11 @@ jobs:
         # 3.9 is what macOS ships as /usr/bin/python3, so it is the oldest
         # Python a new user realistically has; 3.13 is current.
         python: ["3.9", "3.13"]
+        exclude:
+          # GitHub no longer builds 3.9 for its current Ubuntu image, and no
+          # current Linux distribution ships it either. 3.9 matters on macOS.
+          - os: ubuntu-latest
+            python: "3.9"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
