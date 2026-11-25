@@ -330,6 +330,20 @@ if mode == "dev-zero":                # reading this would never end
 if mode == "fifo":                    # neither would reading this: it waits for a writer forever
     os.mkfifo(pathlib.Path(".tools", "pipe"))
     sys.exit(0)
+if mode == "fifo-pointer":            # a "new folder pointer" that is a pipe
+    pathlib.Path("30-knowledge", "newf").mkdir(exist_ok=True)
+    os.mkfifo(pathlib.Path("30-knowledge", "newf", "claude.md"))
+    sys.exit(0)
+if mode == "fifo-settings":           # a plugin's data.json swapped for a pipe: writing into it would block
+    d = pathlib.Path(".obsidian", "plugins", "sync", "data.json")
+    d.unlink()
+    os.mkfifo(d)
+    sys.exit(0)
+if mode == "link-obsidian":           # the whole .obsidian folder becomes a link to a folder with a plugin
+    import shutil
+    shutil.rmtree(".obsidian", ignore_errors=True)
+    os.symlink(os.environ["FAKE_OUTSIDE"], ".obsidian")
+    sys.exit(0)
 if mode == "inject-config":           # the quietest version: only git's config
     with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
         fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
@@ -559,19 +573,43 @@ def check_autoreview(tmp):
 
     if can_link:
         outside = os.path.join(tmp, "outside-dir")
-        for mode_ in ("link-plugin-folder", "link-hooks", "dev-zero", "fifo"):
+        for mode_ in ("link-plugin-folder", "link-hooks", "dev-zero") + (
+                ("fifo", "fifo-pointer", "fifo-settings") if hasattr(os, "mkfifo") else ()):
             shutil.rmtree(outside, ignore_errors=True)
             os.makedirs(outside)
             r = ar("run", "--now", mode=mode_, FAKE_OUTSIDE=outside)
-            if os.listdir(outside) or r.returncode != 3:
+            want = 0 if mode_ == "fifo-settings" else 3      # a pipe as data.json is simply put back
+            if os.listdir(outside) or r.returncode != want:
                 return bad(label, f"{mode_}: wrote outside the vault {os.listdir(outside)} or was not "
                                   f"rolled back (exit {r.returncode}) {r.stderr.strip()[-80:]}")
-        if os.path.islink(os.path.join(vault, ".obsidian", "plugins", "sync")) \
+        if os.path.lexists(os.path.join(vault, "30-knowledge", "newf", "claude.md")) \
+                or not os.path.isfile(os.path.join(vault, ".obsidian", "plugins", "sync", "data.json")) \
+                or os.path.islink(os.path.join(vault, ".obsidian", "plugins", "sync")) \
                 or read(".obsidian/plugins/sync/data.json") != '{"last": 1}' \
                 or os.path.islink(os.path.join(vault, ".git", "hooks")) \
                 or read(".git/hooks/pre-push") != "#!/bin/sh\necho original\n" or exists(".tools/zero") \
                 or os.path.lexists(os.path.join(vault, ".tools", "pipe")):
             return bad(label, "a linked plugin folder, hooks folder or /dev/zero link was not undone")
+
+    if can_link:
+        # a fresh vault with no plugins at all: only the anchor itself can show the swap
+        fresh = os.path.join(tmp, "freshvault")
+        assemble(fresh, "personal")
+        set_mode(fresh, "personal")
+        with open(os.path.join(fresh, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh)
+        sh("git", "init", "-q", cwd=fresh)
+        sh("git", "add", "-A", cwd=fresh)
+        sh("git", "commit", "-qm", "setup", cwd=fresh)
+        evil = os.path.join(tmp, "evil-obsidian")
+        os.makedirs(os.path.join(evil, "plugins", "evil"), exist_ok=True)
+        with open(os.path.join(evil, "plugins", "evil", "main.js"), "w") as fh:
+            fh.write("planted()")
+        r = subprocess.run([sys.executable, os.path.join(fresh, ".tools", "autoreview.py"), "run", "--now"],
+                           capture_output=True, text=True, timeout=120,
+                           env=dict(env, FAKE_MODE="link-obsidian", FAKE_OUTSIDE=evil))
+        if r.returncode != 3 or os.path.islink(os.path.join(fresh, ".obsidian")):
+            return bad(label, f".obsidian swapped for a link went unnoticed in a vault without plugins (exit {r.returncode})")
 
     # 5d. and a legitimate run with Obsidian open and a new folder is NOT
     if ar("run", "--now", mode="benign").returncode or exists("00-inbox/!Review failed.md"):

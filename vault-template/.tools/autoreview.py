@@ -108,7 +108,10 @@ DEFAULTS = {
 # future CLI version: protected files are hashed before the run and compared
 # after (see `protected`).
 TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
-VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "autoreview.py move ", "autoreview.py delete "]
+# exam.py only with --record: measuring is fine, `add` writes into .tools/ and
+# would (rightly) roll the whole run back — new questions need the person's OK.
+VAULT_TOOLS = ["hygiene.py", "search.py", "harvest.py", "exam.py --record", "autoreview.py move ",
+               "autoreview.py delete "]
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
     f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS]
 PROTECTED_DIRS = (".tools", ".git", ".obsidian", ".claude")
@@ -623,6 +626,10 @@ def build_prompt(excluded):
 # ------------------------------------------------- protected files (backstop)
 RUNNER_OWNED = (".tools/logs/", ".tools/review-exclude.txt")
 LOADED_BY_CLAUDE = {"claude.md", "claude.local.md", ".mcp.json"}
+# The folders everything protected lives in. A link or a file in THEIR place is
+# itself a change: `.obsidian` swapped for a link to a folder with a plugin in
+# it would otherwise go unseen in a vault that had no plugins before.
+ANCHORS = {".obsidian", ".obsidian/plugins", ".git", ".git/hooks", ".tools", ".claude"}
 
 
 def fingerprint(path):
@@ -655,6 +662,8 @@ def is_protected(rel):
     low = [s.lower() for s in parts]
     if rel.startswith(RUNNER_OWNED) or "__pycache__" in low:
         return False
+    if "/".join(low) in ANCHORS:
+        return True
     if low[0] == ".git":
         return rel in (".git/config", ".git/hooks") or rel.startswith(".git/hooks/")
     if low[0] == ".obsidian":
@@ -712,10 +721,16 @@ def real_dirs(path):
 
 
 def safe_write(path, data):
+    """Write `data` to `path` as a plain file — through real folders only, and
+    never INTO something that is not a plain file: opening a named pipe for
+    writing blocks until someone reads it, which would freeze the rollback."""
     real_dirs(path)
-    if os.path.islink(path) or path.is_dir():
-        remove(path)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    if os.path.lexists(path):
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            remove(path)
+    flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     with os.fdopen(os.open(path, flags, 0o644), "wb") as fh:
         fh.write(data)
 
@@ -764,10 +779,16 @@ def harmless(rel, before):
     gets a CLAUDE.md that only pulls in its index.md. Anything else is not."""
     if rel in before or Path(rel).name.lower() != "claude.md":
         return False
+    path = VAULT / rel
     try:
-        return (VAULT / rel).read_text(encoding="utf-8").strip() == "@index.md"
+        st = os.lstat(path)
     except OSError:
         return True      # created and gone again: nothing left to act on
+    if not stat.S_ISREG(st.st_mode) or st.st_size > 64:
+        return False     # a pipe, a link or anything bigger is not the pointer
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as fh:
+        return fh.read(64).decode("utf-8", "replace").strip() == "@index.md"
 
 
 def hooks_copy():
