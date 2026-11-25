@@ -1,8 +1,9 @@
 # Hooks — optional, opt-in
 
-A brain only works if things actually land in it. The five skills cover the
-moment you *decide* to capture something. These hooks cover the moment you
-*forget* to.
+A brain only works if things actually land in it — and if it is there when
+the work happens. The five skills cover the moment you *decide* to capture
+or ask. These hooks cover the moments you *forget* to: two that make sure
+things land, one that brings back what a folder's project already decided.
 
 Nothing here is installed by the setup. You add a hook yourself, or you ask
 Claude to ("install the capture check from brainwarden's hooks folder").
@@ -133,9 +134,49 @@ place with `os.replace`, which either happens completely or not at all.
 **Install:** see the header of the script. **Uninstall:** delete the file,
 the settings entry and the queue.
 
-## What neither hook can see
+## `project_context.py`
 
-Both hooks live inside Claude Code. Claude in the browser, Claude Cowork and
+**What it is for.** The brain knows that the shop's checkout was decided
+against PayPal, that the launch is on the 14th and that one question is
+still open. A session started in the shop's code folder knows none of it —
+unless somebody remembers to ask. So decisions get made twice, and the
+second time without the reasons. This hook is the brain turning up where
+the work is, without being asked.
+
+**How it works.** When a session starts (`SessionStart`), it looks at the
+folder: does it belong to one of the brain's projects? Only then does
+Claude get a brief of at most ~550 tokens — the project note and its first
+line, the open next steps, the three newest decisions that mention the
+project (superseded ones left out), the next three dates from the
+top-level notes, the open questions from the project note and from Home —
+each with the path to read before changing direction. Measured on a vault
+of 870 notes: 20–30 ms.
+
+**Which folder is which project.** Explicitly, by a line in the project
+note's frontmatter — `folders: [~/code/shop, ~/code/shop-api]` — or by
+name: the repository's folder is called like the note (or one of its
+`aliases:`), ignoring case and spaces vs. hyphens. A suffix is dropped one
+hyphen at a time, so `acme-shop-api` finds `Acme-Shop.md`; never the other
+way round, so `~/code/acme` finds nothing. A short folder name would
+otherwise match half the brain.
+
+**It is silent everywhere else** — in every folder that is not a project,
+inside the vault (its own `CLAUDE.md` is loaded there), inside any other
+vault, on a resumed session, and on any error. That is the point of the
+design: a hook that pours the brain into *every* session is a leak — private
+notes in a client's repository, the note list in a screen share, a thousand
+tokens in front of every one-line question.
+
+**What it does not do:** it writes nothing, calls no model, opens no
+connection and reads no person notes. What it prints is the person's own
+notes, handed over as material — the brief says so in its first line.
+
+**Install:** see the header of the script. **Uninstall:** delete the file
+and the settings entry.
+
+## What no hook can see
+
+The hooks live inside Claude Code. Claude in the browser, Claude Cowork and
 a phone have no hook mechanism at all (see `COWORK.md`), and the person this
 kit is hardest to fill for — the one whose week happens in an ERP window, a
 warehouse and three phone calls — may never open a terminal.
