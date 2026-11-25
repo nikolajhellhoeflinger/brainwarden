@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Brainwarden self-check — run it before you push, nothing runs it for you.
+"""Brainwarden self-check — run it before you push; GitHub runs it again after.
 
     ./check.sh          macOS · Linux · Git Bash
     py -3 check.py      Windows PowerShell / cmd
@@ -7,8 +7,9 @@
 
 Assembles all three vault modes from the template and measures them, so a
 broken signpost or a stale reference is caught here and not by whoever
-installs the kit next. No CI service, no account, no minutes — just python3
-and about two seconds.
+installs the kit next. Locally it needs nothing but python3 and about two
+seconds; .github/workflows/check.yml runs the identical file on macOS, Linux
+and Windows for every push, so a red job there is always reproducible here.
 
 Why this is Python and not the bash script it used to be. Three reasons, in
 the order they were found:

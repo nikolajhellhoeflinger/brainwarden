@@ -25,5 +25,7 @@ Thanks for making the kit better! The ground rules:
 Run `./check.sh`. It assembles all three vault modes from the template
 and measures them — dead links, orphans, missing signposts, dashboard
 markers, version agreement. Takes a couple of seconds and no account.
-There is no CI service on this repo on purpose: a check nobody can run
-locally is a check nobody fixes.
+GitHub runs the very same script again on every push and pull request,
+on macOS, Linux and Windows (`.github/workflows/check.yml`). There is no
+CI-only check on purpose: a check nobody can run locally is a check
+nobody fixes, so whatever goes red there, `./check.sh` reproduces here.

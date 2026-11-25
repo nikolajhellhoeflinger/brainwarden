@@ -1,5 +1,5 @@
 #!/bin/sh
-# Brainwarden self-check — run it before you push, nothing runs it for you.
+# Brainwarden self-check — run it before you push; GitHub runs it again after.
 #
 #   ./check.sh          macOS · Linux · Git Bash
 #   py -3 check.py      Windows PowerShell / cmd — the same checks

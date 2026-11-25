@@ -1,0 +1,38 @@
+name: check
+
+# The same self-check you run locally (./check.sh), on every push and pull
+# request, on the three systems the kit promises to support. Nothing here is
+# CI-only: if a job goes red, `./check.sh` (or `py -3 check.py` on Windows)
+# reproduces it on your machine.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.os }} · Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # 3.9 is what macOS ships as /usr/bin/python3, so it is the oldest
+        # Python a new user realistically has; 3.13 is current.
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: self-check (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: ./check.sh
+      - name: self-check (Windows)
+        if: runner.os == 'Windows'
+        run: python check.py
