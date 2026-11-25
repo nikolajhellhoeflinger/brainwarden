@@ -59,6 +59,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -624,79 +625,137 @@ RUNNER_OWNED = (".tools/logs/", ".tools/review-exclude.txt")
 LOADED_BY_CLAUDE = {"claude.md", "claude.local.md", ".mcp.json"}
 
 
+def fingerprint(path):
+    """What a path IS, without ever following a link or reading something that
+    is not a plain file: a link is its target, a FIFO or device is its type
+    (reading /dev/zero would hang the check forever), a file is its hash."""
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            return "link:" + os.readlink(path)
+        if stat.S_ISREG(st.st_mode):
+            with open(path, "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+        return f"special:{stat.S_IFMT(st.st_mode)}"
+    except OSError as e:
+        # Never raise for one file: a file planted WITHOUT read permission
+        # would otherwise stop the very sweep that has to remove it.
+        return f"unreadable:{e.errno}"
+
+
+def is_protected(rel):
+    """Every place the model must never change: the kit's tools (the scheduler
+    runs them), git hooks and config (every commit runs them), Obsidian plugin
+    code (Obsidian runs it), Claude settings at ANY depth (start Claude in a
+    subfolder later and it loads them) and every file Claude Code reads as
+    instructions, in any letter case (on macOS and Windows `claude.md` IS
+    `CLAUDE.md`). A plugin's data.json is not here: an open Obsidian rewrites
+    it all the time, so it is put back instead (restore_plugin_settings)."""
+    parts = rel.split("/")
+    low = [s.lower() for s in parts]
+    if rel.startswith(RUNNER_OWNED) or "__pycache__" in low:
+        return False
+    if low[0] == ".git":
+        return rel in (".git/config", ".git/hooks") or rel.startswith(".git/hooks/")
+    if low[0] == ".obsidian":
+        if low[1:] == ["community-plugins.json"]:
+            return True
+        return len(parts) >= 2 and low[1] == "plugins" and not (len(parts) == 4 and low[3] == "data.json")
+    return low[0] == ".tools" or ".claude" in low or low[-1] in LOADED_BY_CLAUDE
+
+
 def protected():
-    """Hash of every file the model must never change: the kit's tools (which
-    the scheduler executes), git hooks (which every commit executes), Obsidian
-    plugins (which Obsidian executes), Claude settings and every CLAUDE.md
-    (which the next session obeys). Files this runner writes itself are left out."""
+    """{vault-relative path: fingerprint} for every protected entry. Walks
+    without following links; a linked folder is an entry itself, so swapping
+    a plugin folder for a link to somewhere else shows up as a change."""
     out = {}
-    roots = [VAULT / ".tools", VAULT / ".claude", VAULT / ".git" / "hooks", VAULT / ".obsidian" / "plugins"]
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for p in root.rglob("*"):
-            rel = p.relative_to(VAULT).as_posix()
-            if not p.is_file() or "__pycache__" in rel or rel.startswith(RUNNER_OWNED):
-                continue
-            # A plugin's data.json is rewritten by an open Obsidian all the
-            # time, so it cannot raise an alarm — but some plugins run
-            # commands stored in it. It is restored instead (plugin_settings).
-            if rel.startswith(".obsidian/") and p.name == "data.json":
-                continue
-            out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
-    # The plugin switch list, and git's config — `core.hooksPath` there would
-    # point every later commit of this runner at someone else's hooks.
-    for rel in (".obsidian/community-plugins.json", ".git/config"):
-        if (VAULT / rel).is_file():
-            out[rel] = hashlib.sha256((VAULT / rel).read_bytes()).hexdigest()
-    # Every file Claude Code reads as instructions or configuration, matched
-    # in ANY letter case: on macOS and Windows `claude.md` IS `CLAUDE.md`.
-    # A `.claude` folder counts at ANY depth: start Claude in a subfolder later
-    # and it loads that folder's settings and commands.
-    for p in VAULT.rglob("*"):
-        rel = p.relative_to(VAULT).as_posix()
-        if not p.is_file() or rel.startswith(".git/"):
-            continue
-        if p.name.lower() in LOADED_BY_CLAUDE or ".claude" in (s.lower() for s in p.relative_to(VAULT).parts[:-1]):
-            out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    for dirpath, dirnames, filenames in os.walk(VAULT, followlinks=False):
+        here = Path(dirpath)
+        rel_dir = here.relative_to(VAULT).as_posix()
+        rel_dir = "" if rel_dir == "." else rel_dir
+        if rel_dir == ".git":
+            dirnames[:] = [d for d in dirnames if d == "hooks"]
+            filenames = [f for f in filenames if f == "config"]
+        for name in list(dirnames):
+            rel = f"{rel_dir}/{name}" if rel_dir else name
+            if os.path.islink(here / name):
+                dirnames.remove(name)
+                if is_protected(rel) or is_protected(rel + "/x"):
+                    out[rel] = fingerprint(here / name)
+        for name in filenames:
+            rel = f"{rel_dir}/{name}" if rel_dir else name
+            if is_protected(rel):
+                out[rel] = fingerprint(here / name)
     return out
+
+
+def remove(p):
+    """Gone, whatever it is now: a link (never followed), a folder, or anything
+    else — a file, but also a named pipe or socket, which are neither."""
+    if not os.path.islink(p) and p.is_dir():
+        shutil.rmtree(p)
+    elif os.path.lexists(p):
+        os.unlink(p)
+
+
+def real_dirs(path):
+    """Make every folder from the vault down to `path` a real folder: a link or
+    a file in the way is removed, never written through. Writing "the old
+    settings" through a planted link would put them wherever it points."""
+    cur = VAULT
+    for part in path.relative_to(VAULT).parts[:-1]:
+        cur = cur / part
+        if os.path.islink(cur) or (os.path.lexists(cur) and not cur.is_dir()):
+            os.unlink(cur)
+        if not os.path.lexists(cur):
+            cur.mkdir()
+
+
+def safe_write(path, data):
+    real_dirs(path)
+    if os.path.islink(path) or path.is_dir():
+        remove(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    with os.fdopen(os.open(path, flags, 0o644), "wb") as fh:
+        fh.write(data)
 
 
 def plugin_settings():
     root = VAULT / ".obsidian" / "plugins"
+    if not root.is_dir() or os.path.islink(root):
+        return {}
     return {p.relative_to(VAULT).as_posix(): p.read_bytes() for p in root.glob("*/data.json")
-            if p.is_file() and not p.is_symlink()} if root.is_dir() else {}
-
-
-def remove(p):
-    """Gone, whatever it is now: a file, a symlink (never followed) or a folder."""
-    if p.is_symlink() or p.is_file():
-        p.unlink()
-    elif p.is_dir():
-        shutil.rmtree(p)
+            if not os.path.islink(p.parent) and os.path.isfile(p) and not os.path.islink(p)}
 
 
 def restore_plugin_settings(saved):
     """Put every plugin's data.json back the way it was before the run. A run
     has no business changing them; an open Obsidian keeps its own settings in
     memory and writes them again, so nothing legitimate is lost — but a
-    command smuggled into one is gone before Obsidian next loads it."""
-    reset = []
+    command smuggled into one is gone before Obsidian next loads it. Each entry
+    on its own: one that fails does not stop the others, and any failure is
+    raised at the end, so the caller fails closed."""
+    reset, failed = [], []
     for rel, data in saved.items():
-        p = VAULT / rel
-        # a symlink in its place is removed, never written through: writing
-        # "the old settings" into wherever it points would be the attack
-        if p.is_symlink() or p.is_dir():
-            remove(p)
-        if not p.exists() or p.read_bytes() != data:
-            p.write_bytes(data)
-            reset.append(rel)
+        try:
+            p = VAULT / rel
+            if os.path.islink(p.parent) or os.path.islink(p) or not p.is_file() or p.read_bytes() != data:
+                safe_write(p, data)
+                reset.append(rel)
+        except OSError as e:
+            failed.append(f"{rel} ({e.__class__.__name__})")
     root = VAULT / ".obsidian" / "plugins"
-    for p in root.glob("*/data.json") if root.is_dir() else []:
-        rel = p.relative_to(VAULT).as_posix()
-        if rel not in saved:
-            remove(p)
-            reset.append(rel)
+    if root.is_dir() and not os.path.islink(root):
+        for p in root.glob("*/data.json"):
+            rel = p.relative_to(VAULT).as_posix()
+            if rel not in saved and not os.path.islink(p.parent):
+                try:
+                    remove(p)
+                    reset.append(rel)
+                except OSError as e:
+                    failed.append(f"{rel} ({e.__class__.__name__})")
+    if failed:
+        raise RuntimeError("could not restore " + ", ".join(failed))
     return reset
 
 
@@ -713,38 +772,63 @@ def harmless(rel, before):
 
 def hooks_copy():
     """Byte copies of what `git reset` cannot restore: hooks and .git/config
-    are not part of the history. Key "" holds the config."""
+    are not part of the history. Key "" holds the config. Links are not
+    copied — what they point to is not the vault's."""
     hooks = VAULT / ".git" / "hooks"
-    saved = {p.name: p.read_bytes() for p in hooks.iterdir() if p.is_file()} if hooks.is_dir() else {}
+    saved = {}
+    if hooks.is_dir() and not os.path.islink(hooks):
+        saved = {p.name: p.read_bytes() for p in hooks.iterdir() if os.path.isfile(p) and not os.path.islink(p)}
     config = VAULT / ".git" / "config"
-    if config.is_file():
+    if os.path.isfile(config) and not os.path.islink(config):
         saved[""] = config.read_bytes()
     return saved
 
 
-def roll_back(base, before, saved_hooks, changed):
-    """Undo the whole run: tracked files back to the starting point, files the
-    run added in protected places removed, git hooks restored byte for byte.
-    The run's log survives — it is the evidence."""
-    log = log_path().read_bytes() if log_path().exists() else b""
-    if "" in saved_hooks:            # first, so the reset below runs with the person's own config
-        (VAULT / ".git" / "config").write_bytes(saved_hooks[""])
-    git("reset", "-q", "--hard", base)
-    for rel in changed:
+def sweep(before):
+    """Remove every protected entry that was not there before the run —
+    computed afresh from the disk, so it works even when the check that
+    found the problem could not finish."""
+    for rel in sorted(protected(), key=lambda r: -r.count("/")):
         if rel not in before:
             try:
-                (VAULT / rel).unlink()
+                remove(VAULT / rel)
             except OSError:
                 pass
+
+
+def _restore_hooks(saved_hooks):
     hooks = VAULT / ".git" / "hooks"
-    if hooks.is_dir():
-        for p in hooks.iterdir():
-            if p.is_file() and p.name not in saved_hooks:
-                p.unlink()
-        for name, data in saved_hooks.items():
-            if name:
-                (hooks / name).write_bytes(data)
-    log_path().write_bytes(log)
+    real_dirs(hooks / "x")
+    for p in list(hooks.iterdir()):
+        if p.name not in saved_hooks:
+            remove(p)
+    for name, data in saved_hooks.items():
+        if name:
+            safe_write(hooks / name, data)
+
+
+def roll_back(base, before, saved_hooks, saved_plugins):
+    """Undo the whole run: new things in protected places removed (links
+    first, before anything is written), git config and hooks restored byte for
+    byte, tracked files back to the starting point, plugin settings put back.
+    Each step on its own, so one failure does not leave the rest undone. The
+    run's log survives — it is the evidence."""
+    log = log_path().read_bytes() if log_path().is_file() and not os.path.islink(log_path()) else b""
+    steps = [lambda: sweep(before),
+             lambda: "" in saved_hooks and safe_write(VAULT / ".git" / "config", saved_hooks[""]),
+             lambda: git("reset", "-q", "--hard", base),
+             lambda: sweep(before),
+             lambda: _restore_hooks(saved_hooks),
+             lambda: restore_plugin_settings(saved_plugins)]
+    for step in steps:
+        try:
+            step()
+        except Exception as e:      # noqa: BLE001 — keep undoing
+            say(f"rollback step failed: {e.__class__.__name__}: {e}")
+    try:
+        safe_write(log_path(), log)
+    except OSError:
+        pass
 
 
 # ------------------------------------------------ move / delete for the model
@@ -947,7 +1031,7 @@ def _run_locked(cfg, cmd, days, idle):
         say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
         changed = [f"(the check itself failed: {e.__class__.__name__})"]
     if changed:
-        return _tampered(stamp, base, before, saved_hooks, changed)
+        return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed)
     flagged = flagged_since(offset)
     slept = False
     if status and not flagged:
@@ -1001,11 +1085,11 @@ def _run_locked(cfg, cmd, days, idle):
     return status
 
 
-def _tampered(stamp, base, before, saved_hooks, changed):
+def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed):
     """The run changed files it can never legitimately touch. Nothing it did
     can be trusted, so all of it goes — and the person is told where to look."""
     say("PROTECTED FILES CHANGED — rolling the whole run back: " + ", ".join(changed[:10]))
-    roll_back(base, before, saved_hooks, changed)
+    roll_back(base, before, saved_hooks, saved_plugins)
     write_fail_note(
         "The unattended review changed files it must never touch (kit tools, git hooks, Obsidian "
         f"plugins, Claude settings or a CLAUDE.md): {', '.join(changed[:10])}. That is what a note "

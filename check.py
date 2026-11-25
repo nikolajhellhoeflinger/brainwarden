@@ -303,6 +303,33 @@ if mode == "symlink-settings":        # data.json pointed at a file OUTSIDE the 
     d.unlink()
     os.symlink(os.environ["FAKE_TARGET"], d)
     sys.exit(0)
+if mode == "unreadable":              # a planted file nobody may read
+    f = pathlib.Path(".tools", "locked.txt")
+    f.write_text("x", encoding="utf-8")
+    os.chmod(f, 0)
+    sys.exit(0)
+if mode == "plant-new":
+    pathlib.Path(".claude", "commands").mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".claude", "commands", "planted.md").write_text("run everything\n", encoding="utf-8")
+    pathlib.Path("30-knowledge", "tools.md").write_text("rewritten by the run\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "link-plugin-folder":      # the plugin folder becomes a link to somewhere outside
+    import shutil
+    shutil.rmtree(pathlib.Path(".obsidian", "plugins", "sync"))
+    os.symlink(os.environ["FAKE_OUTSIDE"], pathlib.Path(".obsidian", "plugins", "sync"))
+    sys.exit(0)
+if mode == "link-hooks":              # .git/hooks becomes a link to somewhere outside
+    import shutil
+    shutil.rmtree(pathlib.Path(".git", "hooks"))
+    os.symlink(os.environ["FAKE_OUTSIDE"], pathlib.Path(".git", "hooks"))
+    pathlib.Path(".tools", "hygiene.py").write_text("planted", encoding="utf-8")
+    sys.exit(0)
+if mode == "dev-zero":                # reading this would never end
+    os.symlink("/dev/zero", pathlib.Path(".tools", "zero"))
+    sys.exit(0)
+if mode == "fifo":                    # neither would reading this: it waits for a writer forever
+    os.mkfifo(pathlib.Path(".tools", "pipe"))
+    sys.exit(0)
 if mode == "inject-config":           # the quietest version: only git's config
     with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
         fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
@@ -357,8 +384,11 @@ def check_autoreview(tmp):
                               encoding="utf-8", errors="replace", env=env)
 
     def ar(*args, mode="ok", **extra):
-        return subprocess.run([sys.executable, script, *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", env=dict(env, FAKE_MODE=mode, **extra))
+        try:
+            return subprocess.run([sys.executable, script, *args], capture_output=True, text=True, timeout=120,
+                                  encoding="utf-8", errors="replace", env=dict(env, FAKE_MODE=mode, **extra))
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(args, 124, "", "TIMEOUT: the run hung")
 
     def calls():
         try:
@@ -484,11 +514,33 @@ def check_autoreview(tmp):
                           f"{r.stderr.strip()[-120:]}")
 
     r = ar("run", "--now", mode="file-for-folder")
-    if r.returncode != 3 or "Traceback" in r.stderr or "check itself failed" not in read("00-inbox/!Review failed.md"):
-        return bad(label, f"when its own check broke, the run did not fail closed (exit {r.returncode}) "
+    if r.returncode != 3 or "Traceback" in r.stderr or read(".obsidian/plugins/sync/data.json") != '{"last": 1}' \
+            or read(".obsidian/plugins/sync/main.js") != "sync()":
+        return bad(label, f"a plugin folder swapped for a file was not restored (exit {r.returncode}) "
                           f"{r.stderr.strip()[-120:]}")
-    if read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
-        return bad(label, "after failing closed, the plugin folder was not restored")
+    if os.name != "nt":
+        r = ar("run", "--now", mode="unreadable")
+        if r.returncode != 3 or exists(".tools/locked.txt"):
+            return bad(label, f"a planted file without read permission blocked the rollback (exit {r.returncode})")
+
+    # fail CLOSED: when the check itself breaks, everything new still goes
+    spec = importlib.util.spec_from_file_location("ar_fc", script)
+    fc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fc)
+
+    def broken(saved):
+        raise RuntimeError("forced for the self-check")
+    fc.restore_plugin_settings = broken
+    saved_env = dict(os.environ)
+    os.environ.update(env, FAKE_MODE="plant-new")
+    try:
+        code = fc.cmd_run(now=True)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_env)
+    if code != 3 or "check itself failed" not in read("00-inbox/!Review failed.md") \
+            or exists(".claude/commands/planted.md") or read("30-knowledge/tools.md") != tools_before:
+        return bad(label, f"when its own check broke, the run did not fail closed (exit {code})")
 
     target = os.path.join(tmp, "outside-target.txt")
     with open(target, "w", encoding="utf-8") as fh:
@@ -504,6 +556,22 @@ def check_autoreview(tmp):
         if open(target, encoding="utf-8").read() != "SAFE" or os.path.islink(settings) \
                 or read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
             return bad(label, "restoring plugin settings wrote through a symlink to a file outside the vault")
+
+    if can_link:
+        outside = os.path.join(tmp, "outside-dir")
+        for mode_ in ("link-plugin-folder", "link-hooks", "dev-zero", "fifo"):
+            shutil.rmtree(outside, ignore_errors=True)
+            os.makedirs(outside)
+            r = ar("run", "--now", mode=mode_, FAKE_OUTSIDE=outside)
+            if os.listdir(outside) or r.returncode != 3:
+                return bad(label, f"{mode_}: wrote outside the vault {os.listdir(outside)} or was not "
+                                  f"rolled back (exit {r.returncode}) {r.stderr.strip()[-80:]}")
+        if os.path.islink(os.path.join(vault, ".obsidian", "plugins", "sync")) \
+                or read(".obsidian/plugins/sync/data.json") != '{"last": 1}' \
+                or os.path.islink(os.path.join(vault, ".git", "hooks")) \
+                or read(".git/hooks/pre-push") != "#!/bin/sh\necho original\n" or exists(".tools/zero") \
+                or os.path.lexists(os.path.join(vault, ".tools", "pipe")):
+            return bad(label, "a linked plugin folder, hooks folder or /dev/zero link was not undone")
 
     # 5d. and a legitimate run with Obsidian open and a new folder is NOT
     if ar("run", "--now", mode="benign").returncode or exists("00-inbox/!Review failed.md"):
