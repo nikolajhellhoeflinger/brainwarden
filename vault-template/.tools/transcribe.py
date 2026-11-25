@@ -22,6 +22,10 @@ capture — the weekly review files it like any other), and moves the audio
 next to the archive (`90-…/voice/`), embedded in the note so it can still be
 played. Nothing is uploaded, no account, no model call.
 
+Needs ffmpeg (ffmpeg.org; macOS: `brew install ffmpeg`), which every engine
+below uses anyway: each recording is converted to a plain WAV first, with its
+format named explicitly, and only that WAV reaches an engine.
+
 Engines, in this order (install one; none comes with the kit):
   1. a command of your own: `.tools/transcribe.json` →
      {"command": ["my-stt", "{audio}"]} — whatever it prints is the text
@@ -150,15 +154,7 @@ def mlx_whisper(audio, lang):
 
 def whisper_cpp(audio, lang, model):
     with tempfile.TemporaryDirectory() as tmp:
-        source = audio
-        if audio.suffix.lower() not in (".wav", ".mp3", ".flac", ".ogg"):
-            # whisper.cpp reads these four itself; an iPhone memo (m4a) needs ffmpeg first
-            if not shutil.which("ffmpeg"):
-                raise RuntimeError(f"whisper.cpp cannot read {audio.suffix} without ffmpeg")
-            source = Path(tmp) / "memo.wav"
-            run_text(["ffmpeg", "-loglevel", "error", "-protocol_whitelist", "file,pipe", "-i", str(audio),
-                      "-ar", "16000", "-ac", "1", str(source)])
-        argv = ["whisper-cli", "-m", model, "-f", str(source), "-otxt", "-of", str(Path(tmp) / "out"), "-np"]
+        argv = ["whisper-cli", "-m", model, "-f", str(audio), "-otxt", "-of", str(Path(tmp) / "out"), "-np"]
         return via_txt(argv + (["-l", lang] if lang else []), tmp, "out")
 
 
@@ -194,25 +190,64 @@ def memos():
 UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 
-def is_audio(path):
-    """Only real audio containers reach a decoder. Decoders sniff the content,
-    not the name: a TEXT file called memo.m4a holding a playlist (#EXTM3U …)
-    or an ffconcat list makes ffmpeg — which mlx-whisper and openai-whisper
-    call — fetch the URLs or read the files it lists. Anything that can write
-    a text file into the inbox could use that to send vault text to a URL.
-    A real recording starts with its container's signature; a text file
-    does not get past this."""
+def container(path):
+    """The recording's container, read from its first bytes — None when it is
+    not one. The name proves nothing: a TEXT file called memo.m4a holding a
+    playlist (#EXTM3U …) or an ffconcat list makes a decoder that guesses the
+    format fetch the URLs or read the files it lists, and anything that can
+    write a text file into the inbox could send vault text to a URL that way.
+    So the format is decided HERE and handed to ffmpeg explicitly (`-f`):
+    ffmpeg never guesses, and a playlist demuxer is never chosen."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(16)
     except OSError:
-        return False
-    return (head[4:8] == b"ftyp"                                  # m4a, mp4, 3gp (iPhone, Android)
-            or head[:4] in (b"OggS", b"fLaC", b"caff", b"\x1aE\xdf\xa3")   # ogg/opus, flac, caf, webm/mkv
-            or head[:3] == b"ID3" or (head[:1] == b"\xff" and head[1:2] and head[1] & 0xE0 == 0xE0)  # mp3, aac
-            or (head[:4] == b"RIFF" and head[8:12] == b"WAVE")
-            or (head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"))
-            or head[:5] == b"#!AMR")
+        return None
+    if head[4:8] == b"ftyp":
+        return "mov"                                     # m4a, mp4, 3gp (iPhone, Android)
+    sig = {b"OggS": "ogg", b"fLaC": "flac", b"caff": "caf", b"\x1aE\xdf\xa3": "matroska"}
+    if head[:4] in sig:
+        return sig[head[:4]]
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return "wav"
+    if head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
+        return "aiff"
+    if head[:5] == b"#!AMR":
+        return "amr"
+    if head[:3] == b"ID3":
+        return "mp3"
+    if len(head) > 1 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0:
+        return "aac" if head[1] & 0x06 == 0 else "mp3"   # ADTS has layer 0, MPEG audio does not
+    return None
+
+
+def ffmpeg_cmd():
+    """ffmpeg (BRAINWARDEN_FFMPEG only for the kit's self-check)."""
+    custom = os.environ.get("BRAINWARDEN_FFMPEG")
+    if custom:
+        return json.loads(custom)
+    found = shutil.which("ffmpeg")
+    return [found] if found else None
+
+
+def to_wav(audio, tmp):
+    """Copy, check, convert — in a folder nobody else writes to, so the bytes
+    that were checked are the bytes that get decoded. Every engine then reads
+    a plain 16 kHz WAV this function wrote, never the inbox file itself."""
+    copy = Path(tmp) / ("in" + audio.suffix.lower())
+    shutil.copyfile(audio, copy)
+    fmt = container(copy)
+    if not fmt:
+        raise ValueError("not an audio recording by its content")
+    ffmpeg = ffmpeg_cmd()
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is needed to read recordings safely — install it (ffmpeg.org)")
+    wav = Path(tmp) / "memo.wav"
+    run_text(ffmpeg + ["-nostdin", "-loglevel", "error", "-protocol_whitelist", "file", "-f", fmt,
+                       "-i", str(copy), "-vn", "-ar", "16000", "-ac", "1", "-y", str(wav)])
+    if not wav.is_file():
+        raise RuntimeError("ffmpeg wrote no audio")
+    return wav
 
 
 def slug(text, words=6):
@@ -256,7 +291,8 @@ def free(path):
 
 def transcribe_one(audio, name, fn, lang, archive):
     when = dt.datetime.fromtimestamp(audio.stat().st_mtime)
-    text = tidy(fn(audio, lang))
+    with tempfile.TemporaryDirectory() as tmp:
+        text = tidy(fn(to_wav(audio, tmp), lang))
     kept = free(archive / audio.name)
     kept.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(audio), str(kept))           # first the audio, so a crash cannot transcribe it twice
@@ -317,7 +353,7 @@ def main(argv=None):
     lang = a.language or cfg.get("language")
     failed = 0
     for audio in pending:
-        if not is_audio(audio):
+        if not container(audio):
             if not a.quiet:
                 print(f"{audio.name}: not an audio recording by its content — left alone, not decoded")
             continue
