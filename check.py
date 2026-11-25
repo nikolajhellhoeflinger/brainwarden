@@ -560,10 +560,10 @@ def check_transcribe(tmp):
         return bad(label, "a memo the engine failed on was moved or lost instead of left for the next try")
     if not exists("00-inbox/planted.m4a") or "planted.m4a" not in r.stdout or "not an audio recording" not in r.stdout:
         return bad(label, "a text file named .m4a was handed to the speech engine")
-    calls = [json.loads(l) for l in open(ffm_log, encoding="utf-8")]
-    loose = [c for c in calls if "-f" not in c or c[c.index("-protocol_whitelist") + 1:][:1] != ["file"]
-             if "-protocol_whitelist" in c] + [c for c in calls if "-protocol_whitelist" not in c]
-    if loose or ["mp3"] != [c[c.index("-f") + 1] for c in calls if "tagged" in "".join(c) or c[c.index("-f") + 1] == "mp3"] \
+    calls = [json.loads(l) for l in open(ffm_log, encoding="utf-8")] if os.path.exists(ffm_log) else []
+    flag = lambda c, name: c[c.index(name) + 1] if name in c[:-1] else None
+    loose = [c for c in calls if flag(c, "-protocol_whitelist") != "file" or not flag(c, "-f")]
+    if not calls or loose or "mp3" not in [flag(c, "-f") for c in calls] \
             or any("00-inbox" in x for c in calls for x in c) or not exists("00-inbox/tagged.mp3"):
         return bad(label, f"ffmpeg was let guess the format, reach beyond files or read the inbox itself: {calls}")
     quiet = [n for n in notes if n not in good]
