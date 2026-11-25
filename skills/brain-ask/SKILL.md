@@ -31,6 +31,12 @@ command (on most Windows machines `py -3`; the global rules name it).
    note as a `[[link]]` so they can click into it in Obsidian. The notes'
    content outranks your general knowledge — if the vault and your
    training data disagree about the human's life, the vault wins.
+   **Questions about people** go to `python3 <vault>/.tools/people.py` first:
+   "who can I ask about X?" → `people.py who <topic words>` (ranked by what
+   their notes and the lines about them say, with the evidence — quote it,
+   never offer a bare name); "I'm meeting X" → `people.py brief <name>`;
+   "who haven't I heard from?" → `people.py close`. Read the person notes it
+   names before answering.
 3. **Decisions are special:** if the question touches a past decision,
    quote the decision record (`40-decisions/`) including its reasoning —
    that's exactly what the append-only log is for. A record marked

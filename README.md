@@ -22,7 +22,7 @@ asks which brain you want, then four short questions, then writes your
 first real notes itself. **You never meet an empty vault.**
 
 No plugins, no cloud service, no telemetry. Markdown files, Git, five small
-Claude skills and six small Python scripts. Works with a brand-new vault or with
+Claude skills and seven small Python scripts. Works with a brand-new vault or with
 the one you already have, wherever it lives.
 
 ---

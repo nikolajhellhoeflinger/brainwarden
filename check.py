@@ -90,7 +90,7 @@ def load_company_drops():
 
 
 def check_compiles():
-    targets = [tool(n) for n in ("search.py", "hygiene.py", "harvest.py", "transcribe.py")]
+    targets = [tool(n) for n in ("search.py", "hygiene.py", "harvest.py", "transcribe.py", "people.py")]
     # progress.py lebt im company-Overlay und war deshalb in keiner Liste —
     # ein Syntaxfehler darin ging grün durch, obwohl genau dieses Werkzeug
     # die eine Zahl liefert, auf die sich ein Firmen-Vault verlässt.
@@ -567,6 +567,84 @@ def check_transcribe(tmp):
     ok(label)
 
 
+def check_people(tmp):
+    """people.py answers "who can I ask?" by what people know, not by who is
+    mentioned most; dates come from the entry a line belongs to; first names
+    alone match nobody; the address book is read, never imported."""
+    label = "people: who, close, brief, upcoming, contacts"
+    vault = os.path.join(tmp, "peoplevault")
+    assemble(vault, "personal")
+    D = __import__("datetime")
+    today = D.date.today()
+    day = lambda n: (today + D.timedelta(days=n)).isoformat()
+
+    def put(rel, text):
+        path = os.path.join(vault, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(text)
+
+    put("30-knowledge/people/Jane-Doe.md", "---\ntype: person\naliases: [Jane Doe]\ncreated: 2020-01-01\n---\n\n"
+        "# Jane Doe\n\n**Role & relationship:** tax lawyer in Vienna, advised on VAT for the shop.\n\n"
+        "## Open\n- whether she takes small clients\n")
+    put("30-knowledge/people/Max-Muster.md", "---\ntype: person\n---\n\n# Max Muster\n\nNeighbour, plays chess.\n")
+    put("30-knowledge/people/Anna-Berger.md", "---\ntype: person\n---\n\n# Anna Berger\n\nCousin.\n")
+    put("20-areas/Old-Friend.md", "---\ntype: person\n---\n\n# Old Friend\n\nSchool friend.\n")
+    # Max: close (many recent mentions), one weak link to tax. Old Friend: many mentions, all years ago.
+    put(f"00-inbox/{day(-3)}-chess.md", "".join(f"Chess with Max Muster, game {i}.\n" for i in range(12))
+        + "Max Muster complained about his tax forms.\nAnna said hi.\n")
+    put("90-archive/2019-05-01-reunion.md", "".join(f"Old Friend, story {i}.\n" for i in range(6)))
+    put("10-projects/Shop.md", f"---\ntype: project\ncreated: 2020-01-01\n---\n\n# Shop\n\n### {day(-10)}\n"
+        "Asked Jane Doe about the invoices.\n")
+    put("Deadlines.md", f"\n- {day(1)} Lunch with Jane Doe\n- {day(30)} Max Muster's birthday\n")
+    home = os.path.join(vault, "Home.md")
+    with open(home, "a", encoding="utf-8") as fh:
+        fh.write(f"\n- Neu ({day(1)}): ask Max Muster about the chess club\n")
+    vcf = os.path.join(tmp, "contacts.vcf")
+    with open(vcf, "w", encoding="utf-8", newline="") as fh:
+        fh.write("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane Doe\r\nEND:VCARD\r\n"
+                 "BEGIN:VCARD\r\nVERSION:2.1\r\nN:Example;Erik;;;\r\n"
+                 "ORG;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Steuerberatung M=C3=BCller\r\n"
+                 "TITLE:Tax ad\r\n viser\r\nEND:VCARD\r\n"
+                 "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Nobody Special\r\nEND:VCARD\r\n")
+    script = os.path.join(vault, ".tools", "people.py")
+
+    def pp(*args, **env_):
+        return subprocess.run([sys.executable, script, *args], cwd=vault, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=dict(os.environ, **env_))
+
+    who = pp("who", "tax").stdout
+    first = next((l for l in who.splitlines() if l and not l.startswith(" ")), "")
+    if not first.startswith("Jane Doe") or "tax lawyer" not in who or "Anna Berger" in who:
+        return bad(label, f"who: closeness outranked knowledge, or a bystander was listed: {who[:300]!r}")
+    close = pp("close").stdout
+    if not close.find("Max Muster") < close.find("Jane Doe") < close.find("Old Friend") \
+            or "quiet since 2019-05-01" not in close:
+        return bad(label, f"close: six old mentions outweigh two recent ones, or no 'quiet since': {close[:400]!r}")
+    if "Anna Berger" in close and "Anna Berger — 30-knowledge/people/Anna-Berger.md · 0 mentions" not in close:
+        return bad(label, "a first name alone counted as a mention")
+    brief = pp("brief", "jane").stdout
+    if f"{day(-10)} Asked Jane Doe about the invoices" not in brief or "small clients" not in brief:
+        return bad(label, f"brief: a log line did not take its entry's date, or open points missing: {brief[:300]!r}")
+    up = pp("upcoming", "--days", "2").stdout
+    if "Lunch with Jane Doe" not in up or "birthday" in up or "chess club" in up:
+        return bad(label, f"upcoming: wrong window or Home's question dates taken as meetings: {up[:200]!r}")
+    con = pp("contacts", vcf).stdout
+    hidden = pp("contacts", vcf, "--no-names").stdout
+    if "Erik Example — Steuerberatung Müller, Tax adviser" not in con or "Jane Doe" in con:
+        return bad(label, f"contacts: vCard 2.1 / folding / already-known not handled: {con!r}")
+    if "Erik" in hidden or "#1 — Steuerberatung Müller" not in hidden or "Nobody" in hidden \
+            or "#1: Erik Example" not in pp("contacts", vcf, "--reveal", "1").stdout:
+        return bad(label, f"contacts --no-names leaked a name or numbers do not map back: {hidden!r}")
+    if "Erik Example" not in pp("who", "steuerberatung", "--contacts", vcf).stdout:
+        return bad(label, "who --contacts did not look in the address book")
+    if pp("contacts", vcf, BRAINWARDEN_UNATTENDED="1").returncode != 2 \
+            or pp("who", "x", "--contacts", vcf, BRAINWARDEN_UNATTENDED="1").returncode != 2 \
+            or pp("upcoming", BRAINWARDEN_UNATTENDED="1").returncode != 0:
+        return bad(label, "the address book was readable in an unattended run (or upcoming was refused)")
+    ok(label)
+
+
 def check_autoreview(tmp):
     """The unattended review is the one part of the kit that acts while nobody
     watches — so every promise it makes is run here against a real assembled
@@ -695,7 +773,7 @@ def check_autoreview(tmp):
             or not set(offered) <= {"Read", "Edit", "Write", "Glob", "Grep", "Bash", "Skill"}:
         return bad(label, f"the unattended model gets too much: {wide or (mode_, offered)}")
     for name, exact in (("exam.py", "exam.py --record)"), ("hygiene.py", "hygiene.py)"),
-                        ("harvest.py", "harvest.py --queue)")):
+                        ("harvest.py", "harvest.py --queue)"), ("people.py", "people.py upcoming)")):
         rules = [a for a in allowed if name in a]
         if not rules or any(not a.endswith(exact) for a in rules):
             return bad(label, f"{name} is not limited to its one command line: {rules}")
@@ -1559,6 +1637,7 @@ def main():
         check_hooks(tmp)
         check_project_context(tmp)
         check_transcribe(tmp)
+        check_people(tmp)
         check_autoreview(tmp)
         check_exam(tmp)
         check_mode_guard(tmp)

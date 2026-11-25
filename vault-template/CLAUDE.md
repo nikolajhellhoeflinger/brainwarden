@@ -278,6 +278,10 @@ garden; it never replaces the plants.
   `search.py` and says how many still find their note in the top three
   (`--record` keeps the score; `add` saves a new question). A miss means a
   note lacks the words people search for — fix the note, not the exam.
+- People: `python3 .tools/people.py who <topic>` (who can help, with evidence) ·
+  `brief <name>` (before a meeting) · `close` (dated mentions, recent ones count
+  most) · `upcoming` (dates naming a person) · `contacts <file.vcf>` (address
+  book, read-only). It stores nothing about anyone; the person-note rule stands.
 - Voice memos: `python3 .tools/transcribe.py` turns audio files in the inbox into
   captures, locally (`--check` names the speech engine; `--auto on` lets the
   runner's tick do it). The recording moves to `90-archive/voice/` and stays

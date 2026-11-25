@@ -131,7 +131,9 @@ the global rules name it).
    marker pair, never a line carrying `<!-- keep:… -->`.
    **`right-now`:** active projects with a one-line status each, AND the `Areas:` line linking every
    note in `20-areas/`, rebuilt from the folder listing every single time · **`next-deadlines`:**
-   next 3 dates from `Deadlines.md` · **`open-questions`:** this review's open loops and parked
+   next 3 dates from `Deadlines.md`, and for every date in the next 7 days that names a person
+   (`python3 <vault>/.tools/people.py upcoming`) a link to their note beside it, so the
+   dossier is one click away before the meeting · **`open-questions`:** this review's open loops and parked
    questions · **`new-this-week`:** the 3–5 newest or most-grown notes.
 8. **The yield — the review ends with output, not with a filing report.** In order:
    - **What can the brain do now that it could not last week?** Name it out of what you filed today

@@ -116,8 +116,8 @@ TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
 # hygiene.py and harvest.py also refuse those arguments on their own while
 # BRAINWARDEN_UNATTENDED is set (run_claude sets it), like exam.py does.
 VAULT_TOOLS = ["search.py ", "autoreview.py move ", "autoreview.py delete "]
-EXACT_TOOLS = ["hygiene.py", "harvest.py --queue", "exam.py --record"]
-OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py"}
+EXACT_TOOLS = ["hygiene.py", "harvest.py --queue", "exam.py --record", "people.py upcoming"]
+OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py", "people.py", "transcribe.py"}
 # (exam.py likewise: `--record add …` would write into .tools/, `--backend qmd`
 # would start another program.)
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
