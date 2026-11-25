@@ -226,6 +226,12 @@ each one the answer to a run that really failed:
   prevent: text from a note ending up in a signpost or in Home, which a
   later session reads. That is content, not code — and a session you sit
   in asks before it acts.
+- **Your own scripts, if the review needs them.** A script you added to
+  `.tools/` (a second search, a map you regenerate) is allowed by name in
+  `.tools/autoreview.json`: `"tools": ["mine.py"]`. Only plain names of
+  files that really sit in `.tools/` count — no paths, no links, none of
+  the kit's own scripts — and since that folder is protected like the
+  rest, no note can extend the list. `status` shows what was accepted.
 - **`status`** says when it last ran and why not since. `uninstall`
   removes the schedule and nothing else.
 

@@ -501,6 +501,42 @@ def check_autoreview(tmp):
             or open(prompt + ".env", encoding="utf-8").read() != "1":
         return bad(label, f"exam.py is not limited to an exact --record, or the run is not marked unattended: {exam_rules}")
 
+    # 5b2. a vault's own scripts: allowed by plain name from the config, nothing else
+    write(".tools/mine.py", "print('mine')\n")
+    linked = False
+    try:
+        os.symlink(os.path.join(tmp, "fake_claude.py"), os.path.join(vault, ".tools", "linked.py"))
+        linked = True
+    except (OSError, NotImplementedError):
+        pass
+    write("outside.py", "print('outside')\n")     # exists, but is no name in .tools/
+    own = dict(cfg, tools=["mine.py", "../outside.py", "autoreview.py", "missing.py", "linked.py"])
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(own, fh)
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "own script")
+    r = ar("run", "--now")
+    argv = open(prompt + ".argv", encoding="utf-8").read().splitlines()
+    rules = argv[argv.index("--allowedTools") + 1:argv.index("--disallowedTools")]
+    # autoreview.py by name would hand the model `install`, `undo`, `run`
+    extra = sorted({a for a in rules if a.startswith("Bash(") and "mine.py" not in a} - set(allowed))
+    extra += [a for a in rules if "autoreview.py*" in a]
+    told = open(prompt, encoding="utf-8").read()
+    if r.returncode or "Bash(python3 .tools/mine.py*)" not in rules or extra \
+            or "python3 .tools/mine.py" not in told:
+        return bad(label, f"the vault's own script was not allowed exactly: exit {r.returncode}, extra {extra}")
+    st = ar("status").stdout
+    if "own scripts:      mine.py" not in st or (linked and "linked.py" not in st.split("not allowed:")[-1]):
+        return bad(label, f"status does not show which own scripts are allowed: {st[-200:]}")
+    os.remove(os.path.join(vault, ".tools", "mine.py"))
+    os.remove(os.path.join(vault, "outside.py"))
+    if linked:
+        os.remove(os.path.join(vault, ".tools", "linked.py"))
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "own script gone")
+
     # 5c. a run that touches kit files is rolled back whole — not just the files
     write(".git/hooks/pre-push", "#!/bin/sh\necho original\n")       # a hook the person set up
     write(".obsidian/plugins/sync/main.js", "sync()")                    # and a plugin they use
