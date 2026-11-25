@@ -34,7 +34,7 @@ You need [Obsidian](https://obsidian.md) (free), a Claude subscription with
 Claude Code (`claude` in your terminal) and say one sentence:
 
 > Set up the second brain from this GitHub repo for me:
-> https://github.com/nikolajhh2008-svg/brainwarden — clone it and follow
+> https://github.com/nikolajhellhoeflinger/brainwarden — clone it and follow
 > SETUP-FOR-CLAUDE.md step by step.
 
 Claude clones the kit, checks your prerequisites, asks its questions, and
@@ -69,12 +69,12 @@ win, and only if you want it.
   Paste the same Quickstart sentence there.
 - **Comfortable with Claude Code?** The fast lane:
   ```bash
-  git clone https://github.com/nikolajhh2008-svg/brainwarden
+  git clone https://github.com/nikolajhellhoeflinger/brainwarden
   cd brainwarden && claude "follow SETUP-FOR-CLAUDE.md step by step"
   ```
 - **Already have a vault and just want the five skills?**
   ```
-  /plugin marketplace add nikolajhh2008-svg/brainwarden
+  /plugin marketplace add nikolajhellhoeflinger/brainwarden
   /plugin install brainwarden@brainwarden
   ```
   Then tell Claude: *"adopt my existing vault at \<path\>, following

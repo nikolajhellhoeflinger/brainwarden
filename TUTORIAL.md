@@ -43,7 +43,7 @@ You don't need to download anything — **Claude does that too.** Open the
 terminal, type `claude`, then say literally:
 
 > Set up the second brain from this GitHub repo for me:
-> https://github.com/nikolajhh2008-svg/brainwarden — clone it and
+> https://github.com/nikolajhellhoeflinger/brainwarden — clone it and
 > follow SETUP-FOR-CLAUDE.md step by step.
 
 Claude fetches the kit and checks your prerequisites. Then comes the one

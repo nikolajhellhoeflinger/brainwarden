@@ -22,7 +22,7 @@ machst es auf und schreibst hinein. Das ist der empfohlene Weg.
 Dort diesen einen Satz einfügen:
 
 > Richte mir das Second Brain aus diesem GitHub-Repo ein:
-> https://github.com/nikolajhh2008-svg/brainwarden – klone es und
+> https://github.com/nikolajhellhoeflinger/brainwarden – klone es und
 > folge SETUP-FOR-CLAUDE.md Schritt für Schritt. Sprich Deutsch mit mir.
 
 **Falls du das Terminal magst:** genauso gut. Terminal öffnen

@@ -141,7 +141,7 @@ instead of overwriting anything.
 
 **A newer kit version came out — how do I update?** One sentence to
 Claude: *"Update my brainwarden setup from
-https://github.com/nikolajhh2008-svg/brainwarden — follow the Updating
+https://github.com/nikolajhellhoeflinger/brainwarden — follow the Updating
 section in SETUP-FOR-CLAUDE.md."* Your notes are never touched; updates
 only replace skills, the search tool and the dashboard scaffolding.
 

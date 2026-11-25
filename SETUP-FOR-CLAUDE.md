@@ -148,7 +148,7 @@ legal contact or works council decides:
 ## Step 2 — Prerequisites
 Check ALL of these before touching anything:
 - Given only the repo URL? Clone the kit yourself first:
-  `git clone https://github.com/nikolajhh2008-svg/brainwarden.git`
+  `git clone https://github.com/nikolajhellhoeflinger/brainwarden.git`
 - **Obsidian** installed (if not: obsidian.md, wait).
 - **git** available (`git --version`; if missing, guide the install — on
   macOS `xcode-select --install`), and a git identity set

@@ -28,6 +28,6 @@ Things worth knowing:
 ## Reporting a vulnerability
 
 Found something anyway? Please open a
-[GitHub issue](https://github.com/nikolajhh2008-svg/brainwarden/issues)
+[GitHub issue](https://github.com/nikolajhellhoeflinger/brainwarden/issues)
 — or use GitHub's private vulnerability reporting on this repository if
 it shouldn't be public.
