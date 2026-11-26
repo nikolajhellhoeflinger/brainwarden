@@ -328,6 +328,8 @@ def coming_dates(vault, project_path, names, today):
             if not ahead:
                 continue
             text = clean(line.lstrip("-* "))
+            # a Deadlines line starts with its date — the brief prints it in front already
+            text = re.sub(r"^\**" + re.escape(min(ahead).isoformat()) + r"\**\s*[·:–—-]?\s*", "", text) or text
             key = (min(ahead), text[:60])
             if key not in seen:
                 seen.add(key)

@@ -118,12 +118,17 @@ def vault_path():
     try:
         with open(rules, encoding="utf-8-sig", errors="ignore") as fh:
             for line in fh:
-                m = re.match(r"\s*[-*]?\s*Brain vault:\s*(.+)", line)
-                if m:
-                    path = m.group(1).strip()
-                    path = re.split(r"\s+(?:<|←|#)", path)[0].strip().strip('"\'')
-                    if path:
-                        return os.path.expanduser(path)
+                # read the way people actually write it: bold, in backticks,
+                # with a remark after it — same reading as project_context.py
+                m = re.match(r"\s*[-*]?\s*(?:\*\*)?\s*Brain vault:\s*(?:\*\*)?\s*(.+)", line)
+                if not m:
+                    continue
+                rest = m.group(1).strip()
+                quoted = re.match(r"`([^`]+)`", rest)
+                path = quoted.group(1) if quoted else re.split(r"\s+(?:<|←|#|—|–|\(|- )", rest)[0]
+                path = path.strip().strip("\"'")
+                if path:
+                    return os.path.expanduser(path)
     except OSError:
         pass
     return os.path.expanduser("~/Brain")

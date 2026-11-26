@@ -406,10 +406,16 @@ def last_seen(p, today):
 
 
 # ------------------------------------------------------------------ commands
+def no_people():
+    if vault_mode() == "company":
+        return "a company vault keeps roles, not people (60-roles/) — there is nobody here for this to read"
+    return "no people notes yet (a folder people/ — or its name in your language — or notes with type: person)"
+
+
 def cmd_close(k):
     persons, today = people(), dt.date.today()
     if not persons:
-        print("no people notes yet (a folder people/ — or its name in your language — or notes with type: person)")
+        print(no_people())
         return 0
     collect(persons)
     # a group note with its people listed is a container, not someone you are close to
@@ -519,6 +525,7 @@ def cmd_upcoming(days):
     persons, today = people(), dt.date.today()
     d = Directory(persons)
     if not d.full and not d.firsts:
+        print(no_people())
         return 0
     # the top-level notes where dates live (Deadlines and the like) — not Home,
     # whose dated lines are mostly WHEN a question was asked, not a meeting
@@ -849,6 +856,26 @@ def match_linkedin(persons, li):
     return out
 
 
+def vault_mode():
+    """As hygiene.py reads it: the VALUE on the mode line (the label may have
+    been translated), else the company heading, else the folder layout — only
+    a company vault has 70-/80- and no 10-/20-."""
+    try:
+        text = (VAULT / "CLAUDE.md").read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        text = ""
+    m = re.search(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b", text, re.M | re.I)
+    if m:
+        return m.group(1).lower()
+    if re.search(r"^#.*company knowledge vault", text, re.M | re.I):
+        return "company"
+    try:
+        tops = {p.name[:3] for p in VAULT.iterdir() if p.is_dir()}
+    except OSError:
+        tops = set()
+    return "company" if tops & {"70-", "80-"} and not tops & {"10-", "20-"} else ""
+
+
 def linkedin_guard(path):
     """The export is other people's data: it stays outside the vault (a vault
     is versioned, and git never forgets), it is not for a company vault (there
@@ -862,13 +889,7 @@ def linkedin_guard(path):
         print("refused: the export lies inside the vault — move it out first (the vault is versioned, "
               "and other people's data in its history cannot be taken back)")
         return 2
-    mode = ""
-    try:
-        m = re.search(r"(?i)\b(?:vault\s+)?mode:?\**\s*\**\s*(personal|professional|company)",
-                      (VAULT / "CLAUDE.md").read_text(encoding="utf-8", errors="replace"))
-        mode = m.group(1).lower() if m else ""
-    except OSError:
-        pass
+    mode = vault_mode()
     if mode == "company":
         print("refused in a company vault: there the company processes the data, and an employee's private "
               "network needs its own legal basis — keep roles, not dossiers, in a company brain")

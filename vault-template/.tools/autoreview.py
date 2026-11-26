@@ -334,11 +334,24 @@ def vault_is_its_own_repo():
 
 
 def vault_mode():
+    """Read the way hygiene.py reads it: the VALUE on the mode line (the label
+    may have been translated), else the company heading, else the folder
+    layout — only a company vault has 70-/80- and no 10-/20-. A guard that
+    missed a translated company vault would let it through."""
     try:
-        m = re.search(r"Vault mode:\s*\**\s*([a-z]+)", (VAULT / "CLAUDE.md").read_text(encoding="utf-8"))
-        return m.group(1) if m else ""
+        text = (VAULT / "CLAUDE.md").read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
-        return ""
+        text = ""
+    m = re.search(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b", text, re.M | re.I)
+    if m:
+        return m.group(1).lower()
+    if re.search(r"^#.*company knowledge vault", text, re.M | re.I):
+        return "company"
+    try:
+        tops = {p.name[:3] for p in VAULT.iterdir() if p.is_dir()}
+    except OSError:
+        tops = set()
+    return "company" if tops & {"70-", "80-"} and not tops & {"10-", "20-"} else ""
 
 
 # ------------------------------------------------------------- the machine

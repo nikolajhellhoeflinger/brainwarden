@@ -347,9 +347,27 @@ def check_hooks(tmp):
             raise ValueError
     except (ValueError, KeyError, TypeError):
         return bad("hooks run", "capture_check did not block on a cold vault")
+    def reason(out):                         # decoded: JSON escapes a Windows path's backslashes
+        try:
+            return json.loads(out)["reason"]
+        except (ValueError, KeyError, TypeError):
+            return ""
+    if inbox not in reason(r.stdout):
+        return bad("hooks run", "capture_check points at another vault than the `Brain vault:` line")
     r = call("capture_check", {})            # immediately again
     if r.stdout.strip():
         return bad("hooks run", "capture_check nags twice inside one window")
+    # the line as people write it — bold, in backticks, with a remark. Read
+    # wrongly, the fallback ~/Brain is a DIFFERENT vault: captures meant for a
+    # work brain would be sent into the private one.
+    cfg2 = os.path.join(tmp, "cfg-bold")
+    os.makedirs(cfg2)
+    with open(os.path.join(cfg2, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write(f"- **Brain vault:** `{vault}` — the line every brain skill reads\n")
+    r = subprocess.run([sys.executable, hook % "capture_check"], input="{}", capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", env=dict(env, CLAUDE_CONFIG_DIR=cfg2))
+    if inbox not in reason(r.stdout):
+        return bad("hooks run", "capture_check misreads a bold `Brain vault:` line in backticks")
 
     r = call("session_queue", {"reason": "clear", "cwd": vault, "session_id": "s1"})
     if r.returncode or "Traceback" in r.stderr:
@@ -623,6 +641,8 @@ def check_project_context(tmp):
                           f"stray {[u for u in unwanted if u in (brief or '')]}")
     if len(brief) > 2400:
         return bad(label, f"brief is {len(brief)} characters — not a brief")
+    if brief.count("2099-01-14") != 1:
+        return bad(label, "a Deadlines line prints its date twice in the brief")
     if "Other" not in (ctx(os.path.join(work, "client-x", "deep")) or ""):
         return bad(label, "the folder named in a project's frontmatter got no brief")
     if "Acme-Shop.md" not in (ctx(os.path.join(work, "shop")) or ""):
@@ -1065,6 +1085,18 @@ def check_linkedin(tmp):
                               cwd=company, capture_output=True, text=True).returncode]
     if refused != [2, 2, 2, 2]:
         return bad(label, f"the export was read inside the vault / unattended / in a company vault: {refused}")
+    # the same company vault with its mode LABEL translated, as hygiene.py
+    # accepts it: both company guards must still recognise it
+    rules = os.path.join(company, "CLAUDE.md")
+    with open(rules, encoding="utf-8") as fh:
+        text = fh.read()
+    with open(rules, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("**Vault mode:", "**Betriebsart:"))
+    run_in = lambda *a: subprocess.run([sys.executable, *a], cwd=company, capture_output=True, text=True)
+    translated = [run_in(os.path.join(company, ".tools", "people.py"), "linkedin", folder).returncode,
+                  run_in(os.path.join(company, ".tools", "autoreview.py"), "install", "--dry-run").returncode]
+    if translated != [2, 1]:
+        return bad(label, f"a company vault with a translated mode label passed a company guard: {translated}")
     leaked = [m for m in ("SECRETMARK", "SUBJECTMARK", "TITLEMARK") if any(m in o for o in outputs)]
     if leaked:
         return bad(label, f"message content reached the output: {leaked}")
