@@ -8,9 +8,10 @@ description: Weekly review of the Brain — inbox to zero, correct the record, f
 Steps 0–9 run every week; "Not every week" has its own triggers. Missed weeks are normal — catch up
 in batches, never scold.
 
-**Conventions:** `<vault>` = the path from the `Brain vault:` line in your global rules; with no
-such line, the folder this session started in, provided it holds a `CLAUDE.md` with a mode line;
-only if neither exists, `~/Brain`. `python3` = your working python command (on most Windows machines `py -3`;
+**Conventions:** `<vault>` = first the vault this session runs in — the folder it started in, or
+one above it, provided it holds a `CLAUDE.md` with a mode line (`personal`/`professional`/`company`)
+and the kit's `.tools/`; otherwise the path from the `Brain vault:` line in your global rules; only
+if neither exists, `~/Brain`. `python3` = your working python command (on most Windows machines `py -3`;
 the global rules name it).
 
 ## Every week

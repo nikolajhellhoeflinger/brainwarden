@@ -72,9 +72,10 @@ normal.
 
 **The skills write into the wrong brain.** Three usual causes, in this
 order: (1) you started the wrong command — a session started with
-`claude` writes to the brain configured in `~/.claude/CLAUDE.md`, never
-to the work vault; (2) the `Brain vault:` line in that configuration
-directory points at the other vault (check both files:
+`claude` outside a vault folder writes to the brain configured in
+`~/.claude/CLAUDE.md`, never to the work vault (a session started
+inside a vault writes to that vault); (2) the `Brain vault:` line in
+that configuration directory points at the other vault (check both files:
 `grep "Brain vault:" ~/.claude/CLAUDE.md ~/.claude-work/CLAUDE.md`); (3)
 only one of the two configuration directories has the five `brain-*`
 skills — each needs its own copy. Anything already filed in the wrong
@@ -162,8 +163,10 @@ its `settings.json` entry; hooks leave state files under
 `~/.claude/state/brainwarden-*`, safe to delete. Nothing else was
 touched. Have a second
 brain? Then also `rm -rf` its vault folder and its configuration
-directory (`~/.claude-work`), and delete the `alias workbrain=…` line
-from your shell profile (`~/.zshrc` or `~/.bashrc`).
+directory (`~/.claude-work`; a company vault's is
+`~/.claude-<company-slug>`, which also keeps that vault's session
+transcripts), and delete the `alias workbrain=…` (or `teambrain=…`)
+line from your shell profile (`~/.zshrc` or `~/.bashrc`).
 
 **Does it work with Obsidian's Canvas and Bases?** Yes — the vault is
 plain Markdown, so every Obsidian feature works on top. If you want
@@ -211,10 +214,14 @@ each one the answer to a run that really failed:
   maintenance wake, and the run dies mid-sentence. So it waits until the
   machine is in use, keeps it awake while it runs, and a run your laptop
   slept through is simply caught up later — not reported as an error.
+  On Linux, seeing whether the machine is in use needs `xprintidle`
+  (X11); without it the runner cannot tell and starts anyway.
 - **Commits before and after.** Your week's captures get their own commit
   first; the model runs no git, the runner commits the review's work as
   one commit (`Review YYYY-MM-DD (unattended)`), and partial work is
-  committed even when the run aborts.
+  committed even when the run aborts. Its own commits run without your
+  Git hooks or `fsmonitor`, and after each model run it clears
+  `.tools/__pycache__` — that is only a cache.
 - **`python3 .tools/autoreview.py undo`** takes back exactly what the last
   unattended review committed (as `git revert`, so history stays), never
   the captures that were there before.
@@ -241,10 +248,11 @@ each one the answer to a run that really failed:
   reads it, the runner also fingerprints all of those files before the run
   and keeps a copy: if any changed, the whole run is rolled back, every one
   of them written back byte for byte (also the ones git does not track),
-  files the run created are moved to `.git/brainwarden-rolled-back/<date>/`
-  (out of the notes and the history, not deleted),
-  and `!Review failed.md` tells you to look for a note with text aimed at
-  the AI. Plugin settings
+  files the run created and the changed versions of existing notes are
+  first kept in `.git/brainwarden-rolled-back/<date>/` (out of the notes
+  and the history, not deleted — nothing you typed meanwhile is lost),
+  and `!Review failed.md` says where and tells you to look for a note
+  with text aimed at the AI. Plugin settings
   (`data.json`, which some plugins run commands from) are simply put back
   as they were. Read-only commands Claude Code always allows (like
   `git log`) stay possible — they change nothing. What no runner can

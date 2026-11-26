@@ -133,6 +133,11 @@ def walk(vault):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):       # Windows pipes default to cp1252
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     # default: the vault this script lives in (.tools/..), like the other tools —
     # "." measured whatever folder the shell happened to stand in
@@ -148,14 +153,19 @@ def main():
     roles = collections.Counter()
     unaddressed = fields = markers = 0
 
+    scanned = 0
     for rel, text in walk(vault):
-        notes += 1
+        scanned += 1
+        # signposts, root pages and kit pages are scanned for gaps but are not
+        # notes: counted, they keep "N of M verified" from ever reaching M
+        is_note = os.sep in rel and os.path.basename(rel) != "index.md" and "<!-- kit-page" not in text[:400]
+        notes += is_note
         fm = frontmatter(text)
         is_stable = re.search(rf"^status:\s*(?:{re.escape(released)}|stable)\b",
                               fm, re.M | re.I) is not None
         is_verified = re.search(r"^verified:\s*\S", fm, re.M) is not None
-        stable += is_stable
-        verified += is_stable and is_verified
+        stable += is_note and is_stable
+        verified += is_note and is_stable and is_verified
         found = GAP.findall(text)
         orphans = ORPHAN.findall(text)
         # `<…>` fields: frontmatter lines are matched against the frontmatter
@@ -171,7 +181,7 @@ def main():
             fields += open_fields
             markers += len(found) + len(orphans)
 
-    if not notes:
+    if not scanned:
         print(f"No notes found under {vault}")
         return 1
 

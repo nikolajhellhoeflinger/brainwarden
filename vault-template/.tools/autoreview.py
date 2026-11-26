@@ -138,7 +138,8 @@ def extra_tools(cfg):
     none of the kit's own scripts (those have exact rules above)."""
     out = []
     for name in cfg.get("tools") or []:
-        if not isinstance(name, str) or not TOOL_NAME.fullmatch(name) or name in OWN_SCRIPTS:
+        if not isinstance(name, str) or not TOOL_NAME.fullmatch(name) \
+                or name.lower() in {s.lower() for s in OWN_SCRIPTS}:
             continue
         try:
             if stat.S_ISREG(os.lstat(TOOLS / name).st_mode) and name not in out:
@@ -246,13 +247,17 @@ def log_path(day=None):
     return LOGS / f"autoreview-{(day or today()).isoformat()}.log"
 
 
+HELD = []     # lines said during a rollback: the log is put back at its end, these go on top
+
+
 def say(text):
     """One line into today's log (and onto the screen when run by hand)."""
     LOGS.mkdir(parents=True, exist_ok=True)
     line = f"[{dt.datetime.now():%H:%M:%S}] {text}"
+    HELD.append(line)
     with open(log_path(), "a", encoding="utf-8") as fh:
         fh.write(line + "\n")
-    if sys.stdout.isatty():
+    if sys.stdout is not None and sys.stdout.isatty():     # pythonw.exe (Windows task) has none
         print(line)
 
 
@@ -296,8 +301,13 @@ def quiet_hours(hour, start, end):
     return (hour >= start or hour < end) if start > end else start <= hour < end
 
 
+# The runner's own git runs no hook and no fsmonitor program: anything a run
+# managed to plant after the check stays inert in the commits that follow it.
+GIT_SAFE = ["-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
+
+
 def git(*args, check=False):
-    return subprocess.run(["git", "-C", str(VAULT), *args], capture_output=True,
+    return subprocess.run(["git", *GIT_SAFE, "-C", str(VAULT), *args], capture_output=True,
                           text=True, encoding="utf-8", errors="replace", check=check)
 
 
@@ -515,6 +525,11 @@ def risky(path, terms):
 def write_set_aside_note(entries):
     """The visible half. A filter that sorts out silently is worse than none —
     notes would vanish and nobody would know."""
+    if SET_ASIDE_NOTE.exists() and not SET_ASIDE_NOTE.read_text(encoding="utf-8", errors="replace") \
+            .startswith("<!-- kit-page --><!-- written by autoreview.py"):
+        say(f"{SET_ASIDE_NOTE.name} is a note of the person's own — left alone; set aside: "
+            + ", ".join(str(e) for e in entries[:10]))
+        return
     if not entries:
         if SET_ASIDE_NOTE.exists():
             SET_ASIDE_NOTE.unlink()
@@ -882,21 +897,41 @@ def restore_plugin_settings(saved):
     return reset
 
 
+KIT_POINTER = "<!-- Loaded automatically when Claude reads a file in this folder. -->\n@index.md"
+
+
+def small_text(path, limit=256):
+    """The text of a small regular file, never through a link — None otherwise."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode) or os.lstat(path).st_size > limit:
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as fh:
+            return fh.read(limit).decode("utf-8", "replace").replace("\r\n", "\n").strip()
+    except OSError:
+        return None
+
+
 def harmless(rel, before):
     """The one change to a CLAUDE.md the review makes on purpose: a NEW folder
-    gets a CLAUDE.md that only pulls in its index.md. Anything else is not."""
+    gets the pointer that pulls in its index.md — word for word the kit's, or
+    one this vault's folders already carry (a translated vault translates its
+    comment). Anything else is not."""
     if rel in before or Path(rel).name.lower() != "claude.md":
         return False
     path = VAULT / rel
-    try:
-        st = os.lstat(path)
-    except OSError:
+    if not os.path.lexists(path):
         return True      # created and gone again: nothing left to act on
-    if not stat.S_ISREG(st.st_mode) or st.st_size > 64:
+    text = small_text(path)
+    if text is None:
         return False     # a pipe, a link or anything bigger is not the pointer
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    with os.fdopen(fd, "rb") as fh:
-        return fh.read(64).decode("utf-8", "replace").strip() == "@index.md"
+    known = {"@index.md", KIT_POINTER}
+    for other in before:
+        if "/" in other and Path(other).name.lower() == "claude.md":
+            t = small_text(VAULT / other)
+            if t and t.endswith("@index.md"):
+                known.add(t)
+    return text in known
 
 
 def files_copy(before):
@@ -956,6 +991,10 @@ def sweep(before):
     for rel in sorted(protected(), key=lambda r: -r.count("/")):
         if rel not in before:
             try:
+                keep_aside(rel)          # a settings file the person saved meanwhile is not lost either
+            except OSError:
+                pass
+            try:
                 remove(VAULT / rel)
             except OSError:
                 pass
@@ -972,10 +1011,90 @@ def _restore_hooks(saved_hooks):
             safe_write(hooks / name, data)
 
 
+def clear_pycache():
+    """`.tools/__pycache__` is only a cache — and the one place in .tools the
+    backstop cannot fingerprint, because it changes whenever a tool runs. A
+    planted .pyc there would run instead of its source on the next import,
+    so it goes after every model run; Python rebuilds it."""
+    p = TOOLS / "__pycache__"
+    try:
+        if os.path.islink(p) or p.is_file():
+            os.unlink(p)
+        elif p.is_dir():
+            shutil.rmtree(p)
+    except OSError as e:
+        say(f"could not clear .tools/__pycache__: {e.__class__.__name__}")
+
+
+RUNNER_STATE = [".tools/logs/.running", ".tools/logs/last-success", ".tools/logs/last-run.json",
+                ".tools/logs/deferred.log", ".tools/logs/scheduler.log", ".tools/review-exclude.txt"]
+
+
+def exclude_runner_state():
+    """This machine's runner state stays out of the history even where the
+    vault's .gitignore is the person's own (an adopted vault): git's per-clone
+    list .git/info/exclude is nobody's file but this machine's."""
+    p = VAULT / ".git" / "info" / "exclude"
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+        missing = [line for line in RUNNER_STATE if line not in text.splitlines()]
+        if missing and (VAULT / ".git").is_dir():
+            p.parent.mkdir(exist_ok=True)
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(("\n" if text and not text.endswith("\n") else "")
+                         + "# autoreview.py: this machine's state, not the brain's\n" + "\n".join(missing) + "\n")
+    except OSError:
+        pass
+
+
 def untracked():
     """Files git does not know and does not ignore — None if git cannot say."""
     r = git("ls-files", "--others", "--exclude-standard", "-z")
     return {p for p in r.stdout.split("\0") if p} if r.returncode == 0 else None
+
+
+def rolled_back_dir():
+    return VAULT / ".git" / "brainwarden-rolled-back" / today().isoformat()
+
+
+def keep_aside(rel):
+    """A copy of one regular file under rolled_back_dir(), through real folders only."""
+    src, target = VAULT / rel, rolled_back_dir() / rel
+    if not stat.S_ISREG(os.lstat(src).st_mode):
+        return False
+    real_dirs(target)
+    data = src.read_bytes()
+    safe_write(target, data)
+    return True
+
+
+def keep_changed(base):
+    """Every tracked file that differs from the starting point, copied aside
+    before `git reset` puts it back: the run's edits as evidence — and an
+    edit the person made to a note meanwhile, which would otherwise be gone
+    for good (the run only starts while someone is at the computer)."""
+    r = git("diff", "--name-only", "-z", base)
+    kept = []
+    for rel in (r.stdout.split("\0") if r.returncode == 0 else []):
+        try:
+            if rel and keep_aside(rel):
+                kept.append(rel)
+        except OSError:
+            pass
+    if kept:
+        say(f"changed files of the rolled-back run kept in {rolled_back_dir().relative_to(VAULT).as_posix()}/: "
+            + ", ".join(kept[:10]))
+    return kept
+
+
+def reset_to(base, start):
+    r = git("reset", "-q", "--hard", base)
+    lock = VAULT / ".git" / "index.lock"
+    if r.returncode and lock.exists() and not (start or {}).get("lock"):
+        lock.unlink()            # left behind during the run, not by a git the person runs
+        r = git("reset", "-q", "--hard", base)
+    if r.returncode:
+        raise RuntimeError(f"git reset: {(r.stderr or r.stdout).strip()[:160]}")
 
 
 def set_aside_new(untracked_before):
@@ -987,14 +1106,14 @@ def set_aside_new(untracked_before):
     if untracked_before is None or now is None:
         say("could not tell which files the run created — new files, if any, were left in place")
         return []
-    dest = VAULT / ".git" / "brainwarden-rolled-back" / today().isoformat()
+    dest = rolled_back_dir()
     moved = []
     for rel in sorted(now - untracked_before):
         src = VAULT / rel
         if not (src.is_file() or src.is_symlink()):
             continue
         target = dest / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
+        real_dirs(target)
         os.replace(src, target)          # a link moves as a link
         moved.append(rel)
     if moved:
@@ -1003,30 +1122,37 @@ def set_aside_new(untracked_before):
     return moved
 
 
-def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None, untracked_before=None):
+def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None, start=None):
     """Undo the whole run: new things in protected places removed (links
     first, before anything is written), git config and hooks restored byte for
     byte, tracked files back to the starting point, plugin settings put back.
     Each step on its own, so one failure does not leave the rest undone. The
     run's log survives — it is the evidence."""
     log = log_path().read_bytes() if log_path().is_file() and not os.path.islink(log_path()) else b""
-    steps = [lambda: sweep(before),
-             lambda: "" in saved_hooks and safe_write(VAULT / ".git" / "config", saved_hooks[""]),
-             lambda: git("reset", "-q", "--hard", base),
-             lambda: sweep(before),
-             lambda: _restore_hooks(saved_hooks),
-             lambda: restore_files(saved_files or {}, before),
-             lambda: restore_plugin_settings(saved_plugins),
-             lambda: set_aside_new(untracked_before)]
-    for step in steps:
+    del HELD[:]
+    start = start or {}
+    steps = [("keep changed", lambda: keep_changed(base)),
+             ("sweep", lambda: sweep(before)),
+             ("git config", lambda: "" in saved_hooks and safe_write(VAULT / ".git" / "config", saved_hooks[""])),
+             ("reset", lambda: reset_to(base, start)),
+             ("sweep again", lambda: sweep(before)),
+             ("hooks", lambda: _restore_hooks(saved_hooks)),
+             ("files", lambda: restore_files(saved_files or {}, before)),
+             ("plugin settings", lambda: restore_plugin_settings(saved_plugins)),
+             ("new files", lambda: set_aside_new(start.get("untracked")))]
+    failed = []
+    for name, step in steps:
         try:
             step()
         except Exception as e:      # noqa: BLE001 — keep undoing
-            say(f"rollback step failed: {e.__class__.__name__}: {e}")
+            failed.append(name)
+            say(f"rollback step failed ({name}): {e.__class__.__name__}: {e}")
     try:
-        safe_write(log_path(), log)
+        said = "".join(line + "\n" for line in HELD).encode("utf-8")
+        safe_write(log_path(), log + said)       # the run's log, then what the rollback did
     except OSError:
         pass
+    return failed
 
 
 # ------------------------------------------------ move / delete for the model
@@ -1077,7 +1203,9 @@ def run_claude(cmd, prompt, cfg):
             # stdin closed: otherwise `claude -p` waits three seconds for piped input
             r = subprocess.run(full, cwd=str(VAULT), stdin=subprocess.DEVNULL, stdout=fh,
                                stderr=subprocess.STDOUT, timeout=cfg["max_run_s"] * 2,
-                               env=dict(os.environ, BRAINWARDEN_UNATTENDED="1"))
+                               env=dict(os.environ, BRAINWARDEN_UNATTENDED="1",
+                                        **({"CLAUDE_CONFIG_DIR": cfg["claude_config_dir"]}
+                                           if cfg.get("claude_config_dir") else {})))
         status = r.returncode
     except subprocess.TimeoutExpired:
         say("the run hung and was stopped")
@@ -1109,7 +1237,8 @@ def log_offset():
         return 0
 
 
-def write_fail_note(reason, todo):
+def write_fail_note(reason, todo, kept="Everything done until the abort is committed; nothing is lost. What was\n"
+                                         "left is still in the inbox."):
     tail = ""
     try:
         tail = "\n".join(log_path().read_text(encoding="utf-8", errors="replace").splitlines()[-12:])
@@ -1125,8 +1254,7 @@ def write_fail_note(reason, todo):
 
 **What to do:** {todo}
 
-Everything done until the abort is committed; nothing is lost. What was
-left is still in the inbox. This note disappears after the next successful run.
+{kept} This note disappears after the next successful run.
 
 Last lines of the log (`.tools/logs/{log_path().name}`):
 
@@ -1229,8 +1357,14 @@ def _run_locked(cfg, cmd, days, idle):
     say(f"start — last success {days} days ago" + (f", idle {idle}s" if idle is not None else ""))
     # Step 0: whatever the week left uncommitted goes into its own commit, so
     # it is unambiguous what THIS run did — and undo never touches it.
+    exclude_runner_state()
     if git_dirty():
-        commit_all(f"Starting point before the weekly run of {stamp}")
+        if not commit_all(f"Starting point before the weekly run of {stamp}"):
+            # without it a rollback could not tell the week's own work from the run's
+            write_fail_note("The week's changes could not be committed before the run (see the log), so the "
+                            "review did not start.", "Commit the vault once by hand (`git add -A && git commit`), "
+                            "then it runs at the next chance.")
+            return 2
         say("starting point committed")
     base = git_head()
     # Step 1: set aside what would abort the run (lesson 1)
@@ -1240,7 +1374,8 @@ def _run_locked(cfg, cmd, days, idle):
     # Step 2: the run, and at most one retry for a plain failure
     prompt = build_prompt(excluded, extra_tools(cfg))
     before, saved_hooks, saved_plugins = protected(), hooks_copy(), plugin_settings()
-    saved_files, fresh = files_copy(before), untracked()
+    saved_files = files_copy(before)
+    fresh = {"untracked": untracked(), "lock": (VAULT / ".git" / "index.lock").exists()}
     offset = log_offset()
     say("review starts")
 
@@ -1261,6 +1396,7 @@ def _run_locked(cfg, cmd, days, idle):
             return [f"(the check itself failed: {e.__class__.__name__})"]
 
     status, took = run_claude(cmd, prompt, cfg)
+    clear_pycache()
     changed = touched_protected()
     if changed:
         return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files, fresh)
@@ -1274,6 +1410,7 @@ def _run_locked(cfg, cmd, days, idle):
         time.sleep(RETRY_WAIT)
         offset = log_offset()
         status, took = run_claude(cmd, prompt, cfg)
+        clear_pycache()
         changed = touched_protected()
         if changed:
             return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files, fresh)
@@ -1325,15 +1462,19 @@ def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_fi
     """The run changed files it can never legitimately touch. Nothing it did
     can be trusted, so all of it goes — and the person is told where to look."""
     say("PROTECTED FILES CHANGED — rolling the whole run back: " + ", ".join(changed[:10]))
-    roll_back(base, before, saved_hooks, saved_plugins, saved_files, fresh)
+    failed = roll_back(base, before, saved_hooks, saved_plugins, saved_files, fresh)
+    aside = f".git/brainwarden-rolled-back/{stamp}/"
+    done = (f"The rollback did NOT complete (failed: {', '.join(failed)}) — check `git status` before "
+            "anything else." if failed else "Everything this run did was rolled back.")
     write_fail_note(
         "The unattended review changed files it must never touch (kit tools, git hooks, Obsidian "
         f"plugins, Claude settings or a CLAUDE.md): {', '.join(changed[:10])}. That is what a note "
-        "smuggling instructions to the AI would cause. Everything this run did was rolled back — "
-        f"files it created are kept outside the notes, in .git/brainwarden-rolled-back/{stamp}/.",
+        "smuggling instructions to the AI would cause — or a setting you changed while it ran. " + done,
         "Before running it again, look at this week's inbox captures and ingested sources for text "
         "addressed to an AI (\"ignore previous instructions\", \"run …\"). Then catch up in a normal, "
-        "supervised chat: *\"brain review\"*.")
+        "supervised chat: *\"brain review\"*.",
+        kept=f"Nothing of this run was committed. What it changed or created — and any note or setting "
+             f"you edited meanwhile — is kept, outside the notes, in `{aside}`.")
     git("add", "--", str(FAIL_NOTE.relative_to(VAULT)))
     git("commit", "-q", "-m", f"Weekly run {stamp} rolled back — protected files were changed",
         "--", str(FAIL_NOTE.relative_to(VAULT)))
@@ -1528,6 +1669,13 @@ def cmd_install(a):
         cfg["weekday"] = a.weekday
     if a.model:
         cfg["model"] = a.model
+    recorded = cfg.get("claude_cmd")
+    first = (recorded[0] if isinstance(recorded, list) and recorded else recorded) or ""
+    if first and not shutil.which(first):
+        print(f"the recorded claude ({first}) is gone — looking for it again")
+        cfg["claude_cmd"] = None
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        cfg["claude_config_dir"] = os.environ["CLAUDE_CONFIG_DIR"]    # a second brain's own config
     if not cfg.get("claude_cmd"):
         found = shutil.which("claude")
         if not found and not a.dry_run:
@@ -1548,6 +1696,7 @@ def cmd_install(a):
     if not TERMS_FILE.exists():
         TERMS_FILE.write_text(DEFAULT_TERMS, encoding="utf-8")
     LOGS.mkdir(parents=True, exist_ok=True)
+    exclude_runner_state()
     if last_success() is None:
         # Without this the very first tick finds "never succeeded" and starts
         # a full review minutes after installing — on the person's usage.

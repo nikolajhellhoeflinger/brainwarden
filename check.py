@@ -485,6 +485,7 @@ count.write_text(str(int(count.read_text() or 0) + 1 if count.exists() else 1))
 pathlib.Path(os.environ["FAKE_PROMPT"]).write_text(sys.argv[sys.argv.index("-p") + 1], encoding="utf-8")
 pathlib.Path(os.environ["FAKE_PROMPT"] + ".argv").write_text("\n".join(sys.argv), encoding="utf-8")
 pathlib.Path(os.environ["FAKE_PROMPT"] + ".env").write_text(os.environ.get("BRAINWARDEN_UNATTENDED", ""), encoding="utf-8")
+pathlib.Path(os.environ["FAKE_PROMPT"] + ".cfgdir").write_text(os.environ.get("CLAUDE_CONFIG_DIR", ""), encoding="utf-8")
 mode = os.environ.get("FAKE_MODE", "ok")
 if mode == "inject":                  # what a note smuggling instructions could make a model do
     with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
@@ -612,7 +613,25 @@ if mode == "benign":                  # Obsidian open, a new folder with its poi
     pathlib.Path(".obsidian", "plugins", "sync", "data.json").write_text('{"last": 2}', encoding="utf-8")
     pathlib.Path("10-projects", "trip").mkdir(parents=True, exist_ok=True)
     pathlib.Path("10-projects", "trip", "index.md").write_text("# trip\n", encoding="utf-8")
-    pathlib.Path("10-projects", "trip", "CLAUDE.md").write_text("@index.md\n", encoding="utf-8")
+    # the pointer exactly as the kit ships it in every folder (two lines, 80 bytes)
+    pathlib.Path("10-projects", "trip", "CLAUDE.md").write_text(
+        "<!-- Loaded automatically when Claude reads a file in this folder. -->\n@index.md\n", encoding="utf-8")
+    sys.exit(0)
+if mode == "pycache":                 # bytecode that would run instead of its source on the next import
+    pathlib.Path(".tools", "__pycache__").mkdir(exist_ok=True)
+    pathlib.Path(".tools", "__pycache__", "search.cpython-39.pyc").write_bytes(b"planted")
+    sys.exit(0)
+if mode == "lock-inject":             # a stale index.lock makes `git reset` fail; the rollback must not
+    pathlib.Path(".git", "index.lock").write_text("", encoding="utf-8")
+    pathlib.Path("30-knowledge", "tools.md").write_text("rewritten under a lock\n", encoding="utf-8")
+    with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
+        fh.write("\n# planted under a lock\n")
+    sys.exit(0)
+if mode == "person-edits":            # the run plants code while the person edits a note of theirs
+    with open(pathlib.Path("30-knowledge", "mine.md"), "a", encoding="utf-8") as fh:
+        fh.write("PERSON-TYPED-THIS while the review ran\n")
+    with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
+        fh.write("\n# planted\n")
     sys.exit(0)
 if mode == "ok":                      # what a review does: file the capture
     src = pathlib.Path("00-inbox", "2026-01-01-thought.md")
@@ -672,7 +691,14 @@ def check_project_context(tmp):
         os.makedirs(os.path.join(work, *d.split("/")))
     with open(os.path.join(work, "company", "CLAUDE.md"), "w", encoding="utf-8") as fh:
         fh.write("**Vault mode: company**\n")
-    os.makedirs(os.path.join(work, "company", "acme-shop"))
+    for d in ("acme-shop", "00-inbox", ".tools"):
+        os.makedirs(os.path.join(work, "company", d))
+    open(os.path.join(work, "company", ".tools", "hygiene.py"), "w").close()
+    # a code repository whose rules file merely says "Mode:" is no vault: the brief still comes
+    for d in ("modal-repo/acme-shop", "modal-repo/00-setup"):
+        os.makedirs(os.path.join(work, *d.split("/")))
+    with open(os.path.join(work, "modal-repo", "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write("# A repo\n\n**Mode:** strict TypeScript\n")
     env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
 
     def ctx(cwd, source="startup", raw=None):
@@ -698,6 +724,8 @@ def check_project_context(tmp):
         return bad(label, "the folder named in a project's frontmatter got no brief")
     if "Acme-Shop.md" not in (ctx(os.path.join(work, "shop")) or ""):
         return bad(label, "a folder named like the project's alias got no brief")
+    if "Acme-Shop.md" not in (ctx(os.path.join(work, "modal-repo", "acme-shop")) or ""):
+        return bad(label, "a repository whose CLAUDE.md says 'Mode:' was taken for a vault and got no brief")
     quiet = {"a shorter folder name": os.path.join(work, "acme"),
              "a dropped project": os.path.join(work, "gone"),
              "inside the vault": os.path.join(vault, "10-projects"),
@@ -709,6 +737,17 @@ def check_project_context(tmp):
         loud.append("broken input")
     if loud:
         return bad(label, f"spoke where it must be silent: {loud}")
+    # a translated vault: the projects folder by its name in that language, or by the kit's number
+    spec = importlib.util.spec_from_file_location("pc", os.path.join(ROOT, "hooks", "project_context.py"))
+    pc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pc)
+    for names, want in ((("10-proyectos", "40-decisiones"), "10-proyectos"), (("10-vorhaben", "40-x"), "10-vorhaben"),
+                        (("20-projekte", "10-schule"), "20-projekte")):
+        es = os.path.join(tmp, "pc-" + want)
+        for n_ in names:
+            os.makedirs(os.path.join(es, n_))
+        if os.path.basename(pc.folders(es)[0] or "") != want:
+            return bad(label, f"the projects folder of a vault with {names} was not found")
     ok(label)
 
 
@@ -1152,7 +1191,8 @@ def check_linkedin(tmp):
     company = os.path.join(tmp, "licompany")
     assemble(company, "company")
     set_mode(company, "company")
-    refused = [pp("linkedin", inside).returncode, pp("who", "x", "--linkedin", inside).returncode,
+    respelled = inside.swapcase() if os.path.exists(inside.swapcase()) else inside   # macOS/Windows: same folder
+    refused = [pp("linkedin", respelled).returncode, pp("who", "x", "--linkedin", inside).returncode,
                pp("linkedin", folder, BRAINWARDEN_UNATTENDED="1").returncode,
                subprocess.run([sys.executable, os.path.join(company, ".tools", "people.py"), "linkedin", folder],
                               cwd=company, capture_output=True, text=True).returncode]
@@ -1399,6 +1439,11 @@ def check_autoreview(tmp):
             for f in fs if f == "filed-by-the-run.md"]
     if exists("30-knowledge/filed-by-the-run.md") or not kept:
         return bad(label, "a new note of a rolled-back run stayed in the vault (or was not kept aside)")
+    rolled = os.path.join(vault, ".git", "brainwarden-rolled-back")
+    kept_files = {os.path.relpath(os.path.join(dp, f), rolled).split(os.sep, 1)[-1].replace(os.sep, "/")
+                  for dp, _, fs in os.walk(rolled) for f in fs}
+    if "30-knowledge/tools.md" not in kept_files or ".mcp.json" not in kept_files:
+        return bad(label, f"a rollback threw away what it reset or swept instead of keeping it aside: {sorted(kept_files)[:8]}")
     if "rolled back" not in read("00-inbox/!Review failed.md") or "rolled back" not in log():
         return bad(label, "a rolled-back run left no notice")
 
@@ -1619,6 +1664,93 @@ def check_autoreview(tmp):
     if "reviews: 1 day (" not in stats:
         return bad(label, "--stats does not count one day of runs as one review day: "
                           + next((l for l in stats.splitlines() if l.startswith("reviews")), "?"))
+
+    # 9b. the person's edit to an existing note while a run is rolled back: kept, and the notice says where
+    write("30-knowledge/mine.md", "a note of mine\n")
+    sh("git", "add", "-A")
+    sh("git", "commit", "-qm", "a note of mine")
+    r = ar("run", "--now", mode="person-edits")
+    kept_texts = [open(os.path.join(dp, f), encoding="utf-8", errors="replace").read()
+                  for dp, _, fs in os.walk(rolled) for f in fs if f == "mine.md"]
+    notice = read("00-inbox/!Review failed.md") if exists("00-inbox/!Review failed.md") else ""
+    if r.returncode != 3 or not any("PERSON-TYPED-THIS" in t for t in kept_texts) \
+            or "brainwarden-rolled-back" not in notice or "nothing is lost" in notice:
+        return bad(label, f"a rollback lost the person's own edit to a note, or the notice hid where it is "
+                          f"(exit {r.returncode}, kept {len(kept_texts)})")
+    # 9c. a stale index.lock must not make the rollback a rollback in name only
+    tools_now = read("30-knowledge/tools.md")
+    r = ar("run", "--now", mode="lock-inject")
+    if r.returncode != 3 or read("30-knowledge/tools.md") != tools_now or "planted under a lock" in read(".tools/hygiene.py"):
+        return bad(label, f"with an index.lock left behind, the rollback left the run's changes (exit {r.returncode})")
+    if exists(".git/index.lock"):
+        os.remove(os.path.join(vault, ".git", "index.lock"))
+    # 9d. bytecode is only a cache: whatever a run leaves there is gone afterwards
+    r = ar("run", "--now", mode="pycache")
+    if exists(".tools/__pycache__/search.cpython-39.pyc"):
+        return bad(label, "bytecode planted in .tools/__pycache__ survived the run")
+    # 9e. the week could not be committed: the run must not start (a rollback could not tell them apart)
+    write("00-inbox/2026-01-03-unsaved.md", "captured, not yet committed\n")
+    with open(os.path.join(vault, ".git", "index.lock"), "w") as fh:
+        fh.write("")
+    before_calls = calls()
+    r = ar("run", "--now")
+    os.remove(os.path.join(vault, ".git", "index.lock"))
+    if r.returncode != 2 or calls() != before_calls or not exists("00-inbox/2026-01-03-unsaved.md"):
+        return bad(label, f"the run started although the starting point could not be committed (exit {r.returncode})")
+    # 9f. a second brain's config dir reaches the model; this machine's state never reaches git
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(dict(cfg, claude_config_dir=os.path.join(tmp, "work-config")), fh)
+    ar("run", "--now")
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    if open(prompt + ".cfgdir", encoding="utf-8").read() != os.path.join(tmp, "work-config"):
+        return bad(label, "a second brain's CLAUDE_CONFIG_DIR did not reach the scheduled run")
+    if ".tools/logs/last-success" not in open(os.path.join(vault, ".git", "info", "exclude"), encoding="utf-8").read():
+        return bad(label, "the runner's own state is not kept out of git where the .gitignore is the person's")
+    r = ar("install", "--dry-run", "--platform", "linux", CLAUDE_CONFIG_DIR=os.path.join(tmp, "work-config"))
+    if "claude_config_dir" not in r.stdout:
+        return bad(label, "install did not record the second brain's config directory")
+    # 9g. a recorded claude that no longer exists is looked for again
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(dict(cfg, claude_cmd=[os.path.join(tmp, "gone", "claude")]), fh)
+    r = ar("install", "--dry-run", "--platform", "linux")
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    if os.path.join(tmp, "gone", "claude") in r.stdout.split("would write", 1)[-1].split("\n", 1)[0]:
+        return bad(label, "install kept a claude path that no longer exists")
+    # 9h. a note of the person's own called "Set aside.md" is never deleted
+    write("00-inbox/Set aside.md", "my own list of things I set aside\n")
+    ar("run", "--now")
+    if not exists("00-inbox/Set aside.md") or read("00-inbox/Set aside.md") != "my own list of things I set aside\n":
+        return bad(label, "the person's own 'Set aside.md' was deleted or overwritten")
+    # 9i. no console at all (pythonw.exe under the Windows task scheduler): logging must not crash
+    spec_w = importlib.util.spec_from_file_location("ar_w", script)
+    mod_w = importlib.util.module_from_spec(spec_w)
+    spec_w.loader.exec_module(mod_w)
+    real_out = sys.stdout
+    try:
+        sys.stdout = None
+        mod_w.say("a line with no console attached")
+    except Exception as e:      # noqa: BLE001
+        sys.stdout = real_out
+        return bad(label, f"logging without a console crashed ({e.__class__.__name__}) — the Windows task never runs")
+    finally:
+        sys.stdout = real_out
+    # 9j. a kit script under another spelling is not an "own script" the model may run freely
+    if mod_w.extra_tools({"tools": ["AutoReview.py", "HYGIENE.py"]}):
+        return bad(label, "a kit script in other letter case was offered as an own script")
+
+    # 9k. the runner's own commits run no git hook: one planted after the check stays inert
+    marker = os.path.join(tmp, "hook-ran")
+    hook_file = os.path.join(vault, ".git", "hooks", "pre-commit")
+    with open(hook_file, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"#!/bin/sh\ntouch '{marker}'\n")
+    os.chmod(hook_file, 0o755)
+    write("00-inbox/2026-01-04-another.md", "one more capture\n")
+    ar("run", "--now")
+    os.remove(hook_file)
+    if os.path.exists(marker):
+        return bad(label, "a git hook ran during the runner's own commits")
 
     # 10. never commit into a repository the vault only lives inside
     outer = os.path.join(tmp, "outer")
@@ -2144,6 +2276,23 @@ def check_promise_not_to_overwrite(tmp):
             or open(os.path.join(folder, "mynote.md"), encoding="utf-8").read() != "my own note\n":
         return bad("assemble keeps its no-overwrite promise",
                    f"on a folder with notes, the overlays did not replace the core: {head.strip()!r}")
+    # a subfolder that is a link to notes kept elsewhere: what is behind it is theirs too
+    elsewhere = os.path.join(tmp, "notes-elsewhere")
+    os.makedirs(elsewhere)
+    with open(os.path.join(elsewhere, "index.md"), "w", encoding="utf-8") as fh:
+        fh.write("# my own knowledge index\n")
+    linked = os.path.join(tmp, "linked-vault")
+    os.makedirs(linked)
+    try:
+        os.symlink(elsewhere, os.path.join(linked, "30-knowledge"), target_is_directory=True)
+    except (OSError, NotImplementedError):
+        linked = None                        # Windows without the symlink privilege
+    if linked:
+        subprocess.run([sys.executable, os.path.join(ROOT, "assemble.py"), linked, "personal"],
+                       capture_output=True, text=True)
+        if open(os.path.join(elsewhere, "index.md"), encoding="utf-8").read() != "# my own knowledge index\n":
+            return bad("assemble keeps its no-overwrite promise",
+                       "a file behind a symlinked folder was OVERWRITTEN")
     ok("assemble keeps its no-overwrite promise")
 
 
@@ -2187,6 +2336,17 @@ def check_translated_company(tmp):
     if out["en"] != out["de"]:
         return bad("progress.py counts the same in any language",
                    f"english {out['en']} vs translated {out['de']}")
+    # every real note released: the headline must be able to say "all of them"
+    tiny = os.path.join(tmp, "firma-tiny")
+    for rel, text in (("Home.md", "<!-- kit-page -->\n# Home\n"), ("50-processes/index.md", "# Processes\n"),
+                      ("50-processes/ship.md", "---\nstatus: stable\nverified: {by: human:ana, at: 2026-01-01}\n---\n# Ship\n")):
+        os.makedirs(os.path.dirname(os.path.join(tiny, rel)), exist_ok=True)
+        with open(os.path.join(tiny, rel), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    r = run([os.path.join(TEMPLATE, "modules", "company", ".tools", "progress.py"), tiny])
+    if "1 of 1 notes verified" not in r.stdout:
+        return bad("progress.py counts the same in any language",
+                   f"signposts and kit pages were counted as notes: {r.stdout.strip().splitlines()[:1]}")
     ok("progress.py counts the same in any language")
 
 
@@ -2206,6 +2366,43 @@ def check_mode_guard(tmp):
         return bad("unset {{MODE}} is reported",
                    f"hygiene silently assumed {mode_line!r}")
     ok("unset {{MODE}} is reported")
+
+
+def check_nfd_and_utc(tmp):
+    """A file name macOS stored decomposed (u + combining diaeresis) is found
+    by a link that spells it composed; a calendar time in UTC lands on the
+    local day."""
+    label = "decomposed file names and UTC calendar times"
+    import unicodedata
+    vault = os.path.join(tmp, "nfdvault")
+    assemble(vault, "personal")
+    set_mode(vault, "personal")
+    fm = "---\ntype: knowledge\ntitle: {t}\ncreated: 2026-01-01\ntags: [x]\n---\n\n"
+    nfd = unicodedata.normalize("NFD", "Über Gold.md")
+    with open(os.path.join(vault, "30-knowledge", nfd), "w", encoding="utf-8") as fh:
+        fh.write(fm.format(t="Über Gold") + "# Über Gold\n\nWhy it moves, in my own words, with one case to keep.\n")
+    # a PATH link (a bare name is found by name anyway): from another folder, spelled composed
+    with open(os.path.join(vault, "30-knowledge", "Gold-MOC.md"), "w", encoding="utf-8") as fh:
+        fh.write(fm.format(t="Gold MOC") + "# Gold MOC\n\nThe map: [Über Gold](Über%20Gold.md) and the rest.\n"
+                 .replace("Über%20Gold.md", unicodedata.normalize("NFC", "Über Gold.md").replace(" ", "%20")))
+    with open(os.path.join(vault, "10-projects", "Gold-Plan.md"), "w", encoding="utf-8") as fh:
+        fh.write(fm.format(t="Gold plan") + "# Gold plan\n\nBuilt on [Über Gold](../30-knowledge/"
+                 + unicodedata.normalize("NFC", "Über Gold.md").replace(" ", "%20") + ") and [[Gold-MOC]].\n")
+    try:
+        _, counts = hygiene_findings(vault)
+    except RuntimeError as e:
+        return bad(label, str(e)[:120])
+    dead = next((n for t, n in counts.items() if t.startswith("dead links")), None)
+    if dead:
+        return bad(label, f"a composed link to a decomposed file name counted as dead ({dead})")
+    if os.name != "nt":                      # TZ needs tzset, which Windows lacks
+        code = ("import importlib.util as u,sys;s=u.spec_from_file_location('h',sys.argv[1]);m=u.module_from_spec(s);"
+                "s.loader.exec_module(m);print(m.ics_date('20261126T230000Z'))")
+        r = subprocess.run([sys.executable, "-c", code, tool("harvest.py")], capture_output=True, text=True,
+                           env=dict(os.environ, TZ="Europe/Vienna"))
+        if r.stdout.strip() != "2026-11-27":
+            return bad(label, f"23:00 UTC on the 26th is the 27th in Vienna, got {r.stdout.strip() or r.stderr[-80:]!r}")
+    ok(label)
 
 
 def check_moc_name(tmp):
@@ -2254,6 +2451,7 @@ def main():
         check_translated_company(tmp)
         check_promise_not_to_overwrite(tmp)
         check_moc_name(tmp)
+        check_nfd_and_utc(tmp)
         for mode in MODES:
             check_mode(mode, tmp)
     print()

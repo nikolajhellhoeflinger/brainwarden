@@ -70,7 +70,7 @@ DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4})")
 # reads it; a translated status scale ("überholt") is not `deprecated`
 SUPERSEDED = re.compile(r"^[ \t]*(?:[-*>][ \t]*)?\**[ \t]*(superseded by\b|ersetzt durch\b|remplacé par\b)",
                         re.I | re.M)
-VAULT_MARK = re.compile(r"^\s*(?:\*\*)?(?:Vault mode|Kit version|Mode)\s*:", re.M | re.I)
+MODE_LINE = re.compile(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b", re.M | re.I)
 
 
 # ------------------------------------------------------------------ reading
@@ -160,10 +160,11 @@ def numbered(vault):
 def folders(vault):
     """(projects, decisions), found the way the other tools find theirs: the
     decisions folder by its number (40-), the projects folder by its name in
-    any language that spells it with "proj" (projects, Projekte, proyectos,
-    projets, progetti …) — its number differs between vault layouts."""
+    any language (projects, Projekte, proyectos, projets, progetti …) — older
+    layouts number it differently — and else by the kit's number, 10-."""
     names = numbered(vault)
-    proj = next((n for n in names if "proj" in n.lower() or "progett" in n.lower()), None)
+    proj = next((n for n in names if re.search(r"pro[jy]|progett", n.lower())), None) \
+        or next((n for n in names if n.startswith("10-")), None)
     dec = next((n for n in names if n.startswith("40-")), None)
     return (os.path.join(vault, proj) if proj else None), (os.path.join(vault, dec) if dec else None)
 
@@ -205,8 +206,11 @@ def in_some_vault(cwd, vault):
         return True
     here = cwd
     for _ in range(12):
+        # the same test capture_check.py makes: a kit mode VALUE, the kit's
+        # tools and an inbox — not any rules file that happens to say "Mode:"
         text = read(os.path.join(here, "CLAUDE.md"))
-        if text and VAULT_MARK.search(text):
+        if text and MODE_LINE.search(text) and os.path.isfile(os.path.join(here, ".tools", "hygiene.py")) \
+                and any(n.startswith("00-") for n in numbered(here)):
             return True
         up = os.path.dirname(here)
         if up == here:

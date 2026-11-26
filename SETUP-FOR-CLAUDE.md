@@ -216,7 +216,10 @@ over an existing folder unasked.
 **Their vault already lives somewhere else** (iCloud folder, different
 name, `~/Documents/Notes` …)? **Don't move it.** Adopt it in place and
 record its real path in Step 6's `Brain vault:` line — the skills follow
-that line, not a hardcoded location. The defaults above are only for fresh
+that line, not a hardcoded location. One exception to raise: Git inside
+an iCloud, Dropbox or OneDrive folder risks corruption (the vault's own
+`CLAUDE.md` says so) — if it lives in one, say so and offer to move it,
+with their OK, before Step 7. The defaults above are only for fresh
 installs. From here on, `<vault>` means the path you actually used.
 
 ### 3b. Fresh install (ONLY into an empty or non-existent folder)
@@ -336,6 +339,19 @@ The rest of adopting:
   assumes the marker pairs exist.
 - On an adopted vault, **never delete a folder** because this mode does
   not use it (3d). Leave it, and note it under Home's "Open questions".
+- **If they already had their own `.gitignore`,** `assemble.py` kept it.
+  With their OK, append the lines of the kit's `vault-template/.gitignore`
+  that theirs lacks — append only, never drop or reorder one of theirs.
+  The kit's lines keep other people's exports (LinkedIn, address books)
+  and the runner's state out of the history.
+- **If they already had their own `CLAUDE.md`** (or root `index.md`),
+  `assemble.py` kept it — so the kit's rules are not in it: no mode
+  line, no language line, no note schema, no red line, no folder map.
+  With their OK, fold `vault-template/CLAUDE.md` (plus the mode
+  overlay's, if it has one — `company`: see the next bullet) into
+  theirs, their own lines kept; the same for the root `index.md`. Then
+  `hygiene.py` must report the right `mode:` — "not detected" means the
+  mode line is still missing.
 - **`company`: check which `CLAUDE.md` you ended up with.**
   `head -1 <vault>/CLAUDE.md` must say *shared company knowledge vault* —
   if it does not, it is the rules file they already had, which
@@ -895,12 +911,14 @@ the wrong vault:
   `workbrain`; never write its content into this vault.
 ```
 
-Check yourself before moving on — this must return nothing:
+Check yourself before moving on — this must return nothing. Grep the
+file the block was written to: `~/.claude/CLAUDE.md` as below, or
+`~/.claude-work/CLAUDE.md` for a second brain (Step 4b):
 ```bash
 grep -nE "<(vault|python|first name|personal\|professional\|company)>|^- Mode: *$" ~/.claude/CLAUDE.md
 ```
 
-Re-running the setup? `grep -n "Brain vault:" ~/.claude/CLAUDE.md` first —
+Re-running the setup? `grep -n "Brain vault:"` that same file first —
 if the block exists, REPLACE it instead of appending a second one.
 
 This block is what makes the brain ambient: EVERY future Claude session in
@@ -1176,9 +1194,10 @@ naming, because they are what a hand-written check kept missing:
       <python> -c "import re;print(len(re.findall(r'<!-- /?block:[a-z-]+ +-->', open('<vault>/Home.md', encoding='utf-8-sig').read())))"
       ```
 - [ ] `<python> <vault>/.tools/search.py test` runs without error, and
-      `ls <vault>/.tools/` shows `search.py`, `hygiene.py`,
-      `INTERVIEW.md` and `hooks/` (`company` also: `progress.py` and the
-      `COWORK.md` you copied in 7b)
+      `ls <vault>/.tools/` shows all seven scripts — `autoreview.py`,
+      `exam.py`, `harvest.py`, `hygiene.py`, `people.py`, `search.py`,
+      `transcribe.py` — plus `INTERVIEW.md` and `hooks/` (`company`
+      also: `progress.py` and the `COWORK.md` you copied in 7b)
 - [ ] `company` only: `<python> <vault>/.tools/progress.py --open` reports
       **no unfilled `<…>` fields**. This is the check for 5e's
       angle-bracket work, and it is the only one there is — `hygiene.py`
@@ -1219,8 +1238,9 @@ naming, because they are what a hand-written check kept missing:
       `.tools/INTERVIEW.md` or a template breaks the script that still
       has to work months from now.
       Note: on the ADOPT path the self page, `Deadlines.md` and
-      `CLAUDE.md` arrive fresh from the template — Step 5e must still
-      fill their `{{LANGUAGE}}`/`{{DATE}}` even when the "first win" was
+      `CLAUDE.md` arrive fresh from the template only if the vault did
+      not have them yet — and each fresh one still needs Step 5e to
+      fill its `{{LANGUAGE}}`/`{{DATE}}`, even when the "first win" was
       built from existing notes.
 
 The placeholder check. It must print nothing. (Keep this block flush left
@@ -1294,12 +1314,22 @@ KEYS — never note content:
    professional`: it adds the two new folders and their files and leaves
    every file already there untouched, their filled-in root `index.md`
    included — so add the `50-processes/` and `60-contribution/` lines to
-   that one by hand.
-3. **Skills:** replace the old `brain-*` folders in `~/.claude/skills/`
+   that one by hand. The new mode also goes into the `**Vault mode:**`
+   line of `<vault>/CLAUDE.md`, or `hygiene.py` keeps measuring the old
+   schema.
+3. **Kit files — always, whatever the version line says.** From the new
+   clone, run `<python> assemble.py <vault> <mode>`: it adds every kit
+   file the vault is missing and never overwrites one that exists. Then
+   copy every `vault-template/.tools/*.py` (`company`: also
+   `vault-template/modules/company/.tools/progress.py`) over the vault's
+   `.tools/` copies, and the kit's `hooks/` folder over
+   `<vault>/.tools/hooks/`. Those are kit infrastructure, never the
+   person's content — replace them, never edit them.
+4. **Skills:** replace the old `brain-*` folders in `~/.claude/skills/`
    with the current five from `skills/`. If their skills were
    personalized (translated, custom paths), diff first and port the new
    features instead of overwriting — ask, don't assume.
-4. **Migrate `status:` → `maturity:` (renamed in 1.3).** The old
+5. **Migrate `status:` → `maturity:` (renamed in 1.3).** The old
    kit used `status: seed|growing|evergreen` for maturity; `status:` is
    now reserved for validity (`draft|stable|deprecated`). Only the KEY
    changes, never a value, never a line of note text:
@@ -1317,6 +1347,7 @@ KEYS — never note content:
 cd <vault> && <python> - <<'PY'
 import pathlib, re
 old = re.compile(r"(?m)^status:[ \t]*(seed|growing|evergreen)[ \t]*(\r?)$")
+front = re.compile(r"\A---[ \t]*\r?\n.*?^---[ \t]*\r?$", re.S | re.M)
 changed, skipped = [], []
 for p in sorted(pathlib.Path(".").rglob("*.md")):
     if ".git" in p.parts:
@@ -1326,7 +1357,10 @@ for p in sorted(pathlib.Path(".").rglob("*.md")):
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         skipped.append(p); continue
-    new = old.sub(r"maturity: \1\2", text)
+    fm = front.match(text)          # the leading --- … --- block only
+    if not fm:
+        continue                    # no frontmatter: nothing to rename
+    new = old.sub(r"maturity: \1\2", fm.group()) + text[fm.end():]
     if new != text:
         bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
         p.write_bytes(bom + new.encode("utf-8"))   # keeps CRLF and the BOM
@@ -1337,11 +1371,12 @@ for p in skipped: print("   NOT UTF-8, left alone:", p)
 PY
 ```
 
-     It rewrites nothing but that one key: `status: draft|stable|deprecated`
-     is left alone, and a `status: seed | growing | evergreen` example inside
-     a sentence or a code block does not match (the line must be exactly the
-     field). Line endings and a byte-order mark survive unchanged, so the
-     diff is one line per note and nothing else.
+     It rewrites nothing but that one key, and only inside the note's
+     leading `---` … `---` frontmatter block:
+     `status: draft|stable|deprecated` is left alone, and a `status: seed`
+     line in the body or in a code block stays exactly as it is. Line
+     endings and a byte-order mark survive unchanged, so the diff is one
+     line per note and nothing else.
    - Then `git diff --stat` and commit this alone
      (`git commit -m "migrate status → maturity"`), so it can be reverted on
      its own. Anything listed as NOT UTF-8 is a separate problem — see the
@@ -1352,14 +1387,14 @@ PY
    - Tell them in one sentence what changed and why: maturity ("how far
      is this note?") and validity ("is this still true?") are two
      different questions that used to share one field.
-5. **Backfill the waypoints (new in 1.3):** older vaults have no
+6. **Backfill the waypoints (new in 1.3):** older vaults have no
    `index.md`/`CLAUDE.md` pairs at all. Copy the ones their mode ships
    (`vault-template/`, plus the overlays for `professional`/`company`),
    then rewrite each `index.md`'s "Entry points" from what is actually in
    that folder — the real notes, never a full listing — and set the
    `generated:` marker. An `index.md` they already wrote themselves is
    updated, never overwritten wholesale.
-6. **Vault additions, never content changes:** bring `Home.md` up to the
+7. **Vault additions, never content changes:** bring `Home.md` up to the
    current template — it now carries the four `<!-- block:… -->` marker
    pairs (5e.3); add them around their existing four blocks rather than
    pasting the English template over a translated Home (read
@@ -1372,8 +1407,8 @@ PY
    current template — preserving their `{{LANGUAGE}}`/`{{MODE}}` values
    and any personal edits (diff first, ask when unsure), not just the
    Commands section.
-7. **Since 1.2.0 the skills follow the `Brain vault:` line** in the global
+8. **Since 1.2.0 the skills follow the `Brain vault:` line** in the global
    rules — make sure the block has one with their real vault path (add it
    if the old block predates it), plus the `Mode:` and `Human:` lines from
    Step 6.
-8. Re-run the Step-9 checklist, then `git commit -m "kit update"`.
+9. Re-run the Step-9 checklist, then `git commit -m "kit update"`.

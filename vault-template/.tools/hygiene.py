@@ -331,6 +331,7 @@ class Vault:
         self.files = set()  # every file (incl. attachments), for link resolution
         self.by_name = {}   # normalised name/stem -> rel (first wins, like Obsidian)
         self.by_path_ci = {}    # lowercased rel path -> real rel path
+        self.by_nfc = {}        # NFC rel path -> real rel path: macOS may store "ü" as u + ¨
         self.unterminated = []  # notes with an unclosed ``` fence
         self.mojibake = []      # files that are not valid UTF-8
         self.case_clash = []    # names that differ only in case
@@ -355,6 +356,7 @@ class Vault:
             for f in sorted(files):
                 rel = os.path.relpath(os.path.join(dirpath, f), root)
                 self.files.add(rel)
+                self.by_nfc.setdefault(unicodedata.normalize("NFC", rel), rel)
                 key_ci = rel.replace(os.sep, "/").lower()
                 # Two files whose names differ only in case can coexist on
                 # Linux but NOT on macOS or Windows: copying that vault to
@@ -460,6 +462,8 @@ class Vault:
                     continue
                 if cand in self.files or self.exists_exact(cand):
                     return cand
+                if unicodedata.normalize("NFC", cand) in self.by_nfc:
+                    return self.by_nfc[unicodedata.normalize("NFC", cand)]
         if "/" in tgt or tgt.startswith("."):
             return None
         return self.by_name.get(norm(os.path.basename(tgt)))

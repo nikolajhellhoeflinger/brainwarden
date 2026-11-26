@@ -17,8 +17,10 @@ skills folder (`~/.claude/skills/`), one opt-in block in
 `autoreview.py install` creates (LaunchAgent / Windows task / systemd
 timer) and the hooks' state files under `<config>/state/brainwarden-*`.
 Run a second brain alongside the first and it adds
-one more vault folder and one more config directory (`~/.claude-work`),
-nothing else.
+one more vault folder, one more config directory (`~/.claude-work`; for
+a company vault `~/.claude-<company-slug>`, which keeps that vault's
+session transcripts) and one alias line in your shell profile
+(`workbrain` / `teambrain`), nothing else.
 
 Things worth knowing:
 

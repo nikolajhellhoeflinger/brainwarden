@@ -879,6 +879,22 @@ def vault_mode():
     return "company" if tops & {"70-", "80-"} and not tops & {"10-", "20-"} else ""
 
 
+def inside_vault(path):
+    """By identity, not by spelling: on macOS and Windows `~/brain/x` IS
+    `~/Brain/x`, and a string comparison would wave it through."""
+    p = os.path.realpath(os.path.expanduser(path))
+    while True:
+        try:
+            if os.path.samefile(p, VAULT):
+                return True
+        except OSError:
+            pass
+        up = os.path.dirname(p)
+        if up == p:
+            return False
+        p = up
+
+
 def linkedin_guard(path):
     """The export is other people's data: it stays outside the vault (a vault
     is versioned, and git never forgets), it is not for a company vault (there
@@ -887,8 +903,7 @@ def linkedin_guard(path):
     if os.environ.get("BRAINWARDEN_UNATTENDED"):
         print("refused while unattended: LinkedIn only in a normal chat")
         return 2
-    real = os.path.realpath(os.path.expanduser(path))
-    if real == os.path.realpath(VAULT) or real.startswith(os.path.realpath(VAULT) + os.sep):
+    if inside_vault(path):
         print("refused: the export lies inside the vault — move it out first (the vault is versioned, "
               "and other people's data in its history cannot be taken back)")
         return 2

@@ -681,7 +681,15 @@ CONTENT_LINE = re.compile(r'((?:[^:"]|"[^"]*")*):(.*)')
 WEEKDAYS = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
 
 def ics_date(value):
-    """The date of a DATE or DATE-TIME value; the time and zone are dropped."""
+    """The date of a DATE or DATE-TIME value. A time in UTC (`…T230000Z`) is
+    turned into this machine's local date first — 23:00 UTC on the 26th is
+    the 27th in Vienna; any other time is taken as written."""
+    utc = re.fullmatch(r"\s*(\d{8}T\d{6})Z\s*", value or "")
+    if utc:
+        try:
+            return datetime.strptime(utc.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).astimezone().date()
+        except (ValueError, OverflowError, OSError):
+            return None
     m = re.match(r"\s*(\d{4})-?(\d\d)-?(\d\d)", value or "")
     try:
         return date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None

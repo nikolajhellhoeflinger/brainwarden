@@ -19,4 +19,7 @@ __pycache__/
 *LinkedInDataExport*
 Connections.csv
 messages.csv
+Invitations.csv
+Endorsement_*.csv
+Recommendations_*.csv
 *.vcf
