@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The weekly review, unattended — built around the ways unattended runs die.
+"""The weekly review, unattended.
 
     python3 .tools/autoreview.py install       # once: schedule it (asks nothing, prints what it did)
     python3 .tools/autoreview.py status        # when did it last run, why not since?
@@ -9,40 +9,30 @@
     python3 .tools/autoreview.py uninstall
 
 (Windows: `py -3` instead of `python3`.) The scheduler calls `run` every
-twenty minutes. Almost every call ends within milliseconds, because the
-review is not due — the point of ticking often is that a missed Friday is
-caught up the next time someone actually sits at the machine, instead of
-the next Friday.
+twenty minutes; almost every call ends at once because the review is not
+due. Ticking often means a missed Friday is caught up the next time
+someone uses the machine.
 
-Every guard below answers a run that really failed. They are worth reading
-before anyone "simplifies" this file:
+Guards (each answers a real failure; read them before simplifying):
 
-  1. A run died ten minutes in on the CONTENT of one inbox note: the model's
-     real-time safeguards abort a headless call when a note is dense with,
-     for example, names of offensive security tools. Same with every model,
-     however the task is phrased — the content in the prompt is enough.
-     Worse than the abort was the aftermath: the only commit was at the very
-     end, so a day's partial work lay unversioned, and the only sign was a
-     system notification nobody keeps. Answer: `set-aside` moves such notes
-     out of the way BEFORE the run (never deletes, always lists them), a
-     commit before AND after, and failures as a file in the inbox.
-  2. Two runs in a row failed with "request timed out" — and the cause was
-     the schedule. A fixed "Friday 16:00" hit a closed laptop; the scheduler
-     caught up during a 45-second maintenance wake, the model call froze
-     mid-sentence when the machine slept again, and the "retry after 60 s"
-     really ran seven hours later in the next wake window. Answer: the run
-     starts only when the machine is in use (input in the last 15 minutes),
-     the machine is kept awake during the run, and a run that the machine
-     slept through is deferred quietly — it is not a failure and must not
-     raise an alarm, or people learn to ignore the alarm.
-  3. A guard that cannot tell (the idle probe missing from PATH) blocked
-     every run silently for days. Answer: on macOS, where the probe should
-     always work, "cannot tell" is logged as such; everything deferred is
-     written to `.tools/logs/deferred.log` with its reason.
-  4. A review that never runs again looks exactly like a review with
-     nothing to do. Answer: the watchdog — every tick, no model call —
-     puts `!Review overdue.md` into the inbox once the last success is
-     older than `patience_days`, and removes it after the next success.
+  1. Note content can make the model's safeguards abort a headless run.
+     `set-aside` moves such inbox notes out of the way BEFORE the run
+     (never deletes, always lists them); the vault is committed before AND
+     after; a failure is reported as a file in the inbox.
+  2. A run starts only while the machine is in use (input in the last 15
+     minutes) and keeps it awake. A run the machine slept through is
+     deferred quietly, not reported as a failure.
+  3. If the idle probe cannot tell on macOS, that is logged. Every
+     deferral goes to `.tools/logs/deferred.log` with its reason.
+  4. Watchdog: every tick, without a model call, it puts
+     `!Review overdue.md` into the inbox once the last success is older
+     than `patience_days`, and removes it after the next success.
+
+The unattended model gets file tools scoped to the vault and the vault's
+own scripts: no web, no git, no general shell, no MCP servers. A run that changes a protected file (kit
+tools, git config or hooks, Obsidian plugins, Claude settings, a CLAUDE.md)
+is rolled back whole. Network: a reachability check of api.anthropic.com
+and the model call.
 
 Undo: the commit before the run marks where the review started. `undo`
 reverts exactly what the review committed (git revert — history is kept),
@@ -90,45 +80,40 @@ DEFAULTS = {
     "claude_cmd": None,     # filled by `install` with the absolute path of `claude`
 }
 
-# What the unattended model may do — and why it is this narrow. Nobody
-# watches this run, and it reads the inbox: pasted web text, ingested
-# sources, anything. A note that says "now run this" must find no tool that
-# could. So there is no general python, no git (this script commits), no
-# mv/rm (the `move`/`delete` commands below refuse to leave the vault or to
-# touch kit files), no web, no MCP servers.
+# What the unattended model may do. Nobody watches the run and it reads the
+# inbox (pasted web text, ingested sources), so a note saying "run this" must
+# find no tool that could: no general python, no git (this script commits),
+# no mv/rm (`move`/`delete` below refuse to leave the vault or touch kit
+# files), no web, no MCP servers.
 #
-# Measured against the real CLI, not assumed (an allowlist alone protected
-# nothing in an earlier headless setup): in `acceptEdits` mode a plain
-# `echo x > file` ran despite the allowlist, and a bare `Write` rule let the
-# model write OUTSIDE the vault. Hence: `default` mode, where anything not
-# listed is refused because nobody is there to approve it; only the tools
-# below are offered at all (`--tools`); file rules are scoped to the vault
-# and written as `Edit(...)` — the CLI ignores `Write(...)` path rules.
-# The last line of defence does not depend on any of this staying true in a
-# future CLI version: protected files are hashed before the run and compared
-# after (see `protected`).
+# An allowlist alone does not hold: in `acceptEdits` mode `echo x > file`
+# runs despite it, and a bare `Write` rule allows writes outside the vault.
+# Hence `default` mode (anything unlisted is refused, as nobody can approve
+# it), only the tools below offered (`--tools`), and file rules scoped to the
+# vault as `Edit(...)` (the CLI ignores `Write(...)` path rules). Backstop
+# that does not depend on the CLI: protected files are hashed before the run
+# and compared after (see `protected`).
 TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
-# Two kinds of rule. Tools that need words from the model (search terms, the
-# note to move) get `tool *` and check those words themselves. Tools that need
-# none get their ONE exact command line: `hygiene.py --root ~/other` would
-# report on a folder outside the vault, `harvest.py --candidates` would print
-# lines from every Claude session on the machine — the review needs neither.
-# hygiene.py and harvest.py also refuse those arguments on their own while
-# BRAINWARDEN_UNATTENDED is set (run_claude sets it), like exam.py does.
+# Tools that need words from the model (search terms, the note to move) get
+# `tool *` and check those words themselves. Tools that need none get ONE
+# exact command line: `hygiene.py --root ~/other` would report on a folder
+# outside the vault, `harvest.py --candidates` would print lines from every
+# Claude session on the machine. hygiene.py and harvest.py also refuse those
+# arguments while BRAINWARDEN_UNATTENDED is set (run_claude sets it), as
+# exam.py does.
 VAULT_TOOLS = ["search.py ", "autoreview.py move ", "autoreview.py delete "]
 EXACT_TOOLS = ["hygiene.py", "harvest.py --queue", "exam.py --record", "people.py upcoming"]
 OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py", "people.py", "transcribe.py",
                "progress.py"}
-# (exam.py likewise: `--record add …` would write into .tools/, `--backend qmd`
-# would start another program.)
+# (exam.py: `--record add …` would write into .tools/, `--backend qmd` would
+# start another program.)
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
     f"Bash({py} .tools/{t}*)" for py in ("python3", "python", "py -3") for t in VAULT_TOOLS] + [
     f"Bash({py} .tools/{t})" for py in ("python3", "python", "py -3") for t in EXACT_TOOLS]
-# A vault may add scripts of its own that its review runs (a search under
-# another name, a map it regenerates): `"tools": ["mine.py"]` in autoreview.json.
-# Safe to allow for the same reason the kit's are: they sit in `.tools/`, which
-# the run cannot change (a changed file there rolls the whole run back), and
-# autoreview.json sits there too, so no note can add a name to this list.
+# A vault may allow scripts of its own: `"tools": ["mine.py"]` in
+# autoreview.json. Safe for the same reason as the kit's: they sit in
+# `.tools/`, which the run cannot change (a change there rolls the run back),
+# and so does autoreview.json, so no note can add a name to this list.
 TOOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\.py")
 
 
@@ -162,9 +147,9 @@ NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers": {}}']
 SAFEGUARD_MARK = "safeguards flagged"
 RETRY_WAIT = int(os.environ.get("AUTOREVIEW_RETRY_WAIT", "60"))
 
-# The set-aside terms that caused the documented abort. A "!" in front means
-# one hit is enough (tools whose only purpose is attacking other systems);
-# the rest occur in harmless sentences too, so only TWO different ones count.
+# Set-aside terms. "!" = one hit is enough (tools whose only purpose is
+# attacking other systems); the rest also occur in harmless text, so it
+# takes two different ones.
 DEFAULT_TERMS = """\
 # Notes containing these words are set aside before an unattended review,
 # because their content can make the model's safeguards abort the whole run.
@@ -214,8 +199,8 @@ def utf8_stdout():
 
 
 def folder(prefix, fallback):
-    """Folders are recognised by NUMBER, not by name: a translated vault
-    calls its inbox `00-eingang`, and the tools must still find it."""
+    """Found by number, not name, so a translated inbox (`00-eingang`) is
+    still found."""
     for p in sorted(VAULT.iterdir()) if VAULT.is_dir() else []:
         if p.is_dir() and p.name.startswith(prefix):
             return p
@@ -262,9 +247,8 @@ def say(text):
 
 
 def defer(reason):
-    """Deferring is the normal case, not an event: it gets one line in its own
-    file, so the log of a real run does not drown in "not now" lines — and so
-    a review that has not happened for days can be explained afterwards."""
+    """One line in its own file: deferring is the normal case and would
+    flood the run log, and the file explains a review missing for days."""
     LOGS.mkdir(parents=True, exist_ok=True)
     lines = []
     if DEFERRED.exists():
@@ -286,11 +270,9 @@ def days_since(day):
 
 
 def is_due(on, last, weekday):
-    """Once a week, aiming at `weekday`, without the rhythm drifting.
-
-    Due on the aimed-for day and the two after it, if the last success is at
-    least five days old; due on any day once it is eight days old (a missed
-    week is caught up as soon as possible, not a week later)."""
+    """Once a week, aiming at `weekday`, without drift: due on that day and
+    the two after it if the last success is at least five days old; due on
+    any day once it is eight days old."""
     days = 999 if last is None else (on - last).days
     near = (on.isoweekday() - weekday) % 7 <= 2
     return (near and days >= 5) or days >= 8
@@ -301,8 +283,8 @@ def quiet_hours(hour, start, end):
     return (hour >= start or hour < end) if start > end else start <= hour < end
 
 
-# The runner's own git runs no hook and no fsmonitor program: anything a run
-# managed to plant after the check stays inert in the commits that follow it.
+# The runner's own git runs no hooks and no fsmonitor program, so anything a
+# run planted stays inert in the commits that follow.
 GIT_SAFE = ["-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
 
 
@@ -337,9 +319,8 @@ def commit_all(message):
 
 
 def vault_is_its_own_repo():
-    """Committing must never reach a repository the vault merely lives inside
-    (a vault in a synced project folder): `git add -A` there would commit
-    someone's whole project."""
+    """Never commit into a repository the vault merely lives inside:
+    `git add -A` there would commit someone's whole project."""
     r = git("rev-parse", "--show-toplevel")
     if r.returncode:
         return False
@@ -350,10 +331,10 @@ def vault_is_its_own_repo():
 
 
 def vault_mode():
-    """Read the way hygiene.py reads it: the VALUE on the mode line (the label
-    may have been translated), else the company heading, else the folder
-    layout — only a company vault has 70-/80- and no 10-/20-. A guard that
-    missed a translated company vault would let it through."""
+    """Read as hygiene.py does: the VALUE on the mode line (the label may be
+    translated), else the company heading, else the layout (only a company
+    vault has 70-/80- and no 10-/20-), so a translated company vault is
+    still recognised."""
     try:
         text = (VAULT / "CLAUDE.md").read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
@@ -373,10 +354,7 @@ def vault_mode():
 # ------------------------------------------------------------- the machine
 def idle_seconds():
     """Seconds since the last keyboard or mouse input, or None if unknown.
-
-    AUTOREVIEW_IDLE_SECONDS replaces the probe — for the self-check, which
-    must not depend on whether someone happens to be typing (or whether a
-    CI runner has a keyboard at all)."""
+    AUTOREVIEW_IDLE_SECONDS overrides the probe for the self-check."""
     forced = os.environ.get("AUTOREVIEW_IDLE_SECONDS")
     if forced is not None:
         return int(forced) if forced.isdigit() else None
@@ -445,9 +423,8 @@ def keep_awake_prefix():
     if sys.platform.startswith("linux") and shutil.which("systemd-inhibit"):
         prefix = ["systemd-inhibit", "--what=sleep:idle", "--who=brainwarden",
                   "--why=weekly review", "--mode=block"]
-        # Installed is not the same as usable: without a login session (a
-        # container, WSL, a CI runner) it refuses and exits BEFORE starting
-        # the command — so the review itself would never run. Try it once.
+        # Without a login session (container, WSL, CI) it exits BEFORE
+        # starting the command, so the review would never run. Try it once.
         try:
             if subprocess.run(prefix + ["true"], capture_output=True, timeout=10).returncode == 0:
                 return prefix
@@ -502,9 +479,8 @@ def load_terms():
 
 def pattern(term):
     """Word boundary in front always, behind only for terms ending in a word
-    character: without it `kali` matches every `Kalibrierung`; with a rigid
-    one `cve-` would never match. A filter with false alarms gets switched
-    off, and then it protects nothing."""
+    character: `kali` must not match `Kalibrierung`, `cve-` must still
+    match."""
     tail = r"(?!\w)" if term[-1].isalnum() else ""
     return rf"(?<!\w){re.escape(term)}{tail}"
 
@@ -513,8 +489,7 @@ def risky(path, terms):
     try:
         text = path.read_text(encoding="utf-8", errors="replace").lower()
     except OSError as e:
-        # Unreadable used to count as harmless. Exactly backwards: the
-        # unchecked case is the one this exists for.
+        # unreadable counts as risky: it could not be checked
         return True, [f"unreadable ({e.__class__.__name__})"]
     hard, soft = terms
     hits_hard = [t for t in hard if re.search(pattern(t), text)]
@@ -523,8 +498,8 @@ def risky(path, terms):
 
 
 def write_set_aside_note(entries):
-    """The visible half. A filter that sorts out silently is worse than none —
-    notes would vanish and nobody would know."""
+    """The visible half: without it, set-aside notes would vanish
+    unnoticed."""
     if SET_ASIDE_NOTE.exists() and not SET_ASIDE_NOTE.read_text(encoding="utf-8", errors="replace") \
             .startswith("<!-- kit-page --><!-- written by autoreview.py"):
         say(f"{SET_ASIDE_NOTE.name} is a note of the person's own — left alone; set aside: "
@@ -550,8 +525,8 @@ SCAN_SKIP = {".git", ".obsidian", ".tools", ".trash", "_templates"}
 
 
 def scan_exclusions(terms):
-    """Risky notes OUTSIDE the inbox are never moved — a decision record is
-    untouchable and a project note belongs where it is. The review is only
+    """Risky notes OUTSIDE the inbox are never moved (decision records are
+    append-only, project notes belong where they are); the review is only
     told not to open them."""
     found = []
     for p in sorted(VAULT.rglob("*.md")):
@@ -603,15 +578,13 @@ def set_aside(check=False):
         write_set_aside_note(earlier)
         return excluded
     SET_ASIDE_DIR.mkdir(exist_ok=True)
-    # The notice is written BEFORE anything moves. Runs abort — that is the
-    # whole premise — and a note moved into a hidden folder that nothing
-    # names is a note lost. A notice naming one file too many is harmless.
+    # Notice BEFORE anything moves: if the run aborts, a note in a hidden
+    # folder that nothing names is lost. Naming one file too many is harmless.
     write_set_aside_note(earlier + new)
     for name, _ in new:
         target = SET_ASIDE_DIR / name
         if target.exists():
-            # A second dictation of the same thought on the same day gets the
-            # same name, and a plain move would overwrite the first.
+            # same name (e.g. a second dictation that day): never overwrite
             target = SET_ASIDE_DIR / f"{target.stem}--{dt.datetime.now():%H%M%S}{target.suffix}"
         shutil.move(str(INBOX / name), str(target))
         say(f"set aside: {name}")
@@ -633,8 +606,8 @@ def restore():
         moved += 1
     rest = sorted(p.name for p in SET_ASIDE_DIR.iterdir())
     if rest:
-        # Never delete the notice while files remain: the folder is hidden in
-        # Obsidian and skipped by every tool, so the notice is all that names them.
+        # Keep the notice while files remain: the folder is hidden in
+        # Obsidian and skipped by every tool, so only the notice names them.
         write_set_aside_note([(n, ["could not be brought back"]) for n in rest])
         print(f"still set aside ({len(rest)}): {', '.join(rest)} — listed in {SET_ASIDE_NOTE.name}")
     else:
@@ -705,9 +678,9 @@ def build_prompt(excluded, extra=()):
 # ------------------------------------------------- protected files (backstop)
 RUNNER_OWNED = (".tools/logs/", ".tools/review-exclude.txt")
 LOADED_BY_CLAUDE = {"claude.md", "claude.local.md", ".mcp.json"}
-# The folders everything protected lives in. A link or a file in THEIR place is
-# itself a change: `.obsidian` swapped for a link to a folder with a plugin in
-# it would otherwise go unseen in a vault that had no plugins before.
+# The folders everything protected lives in. A link or file in their place is
+# itself a change (e.g. `.obsidian` swapped for a link to a folder holding a
+# plugin).
 ANCHORS = {".obsidian", ".obsidian/plugins", ".git", ".git/hooks", ".tools", ".claude"}
 
 
@@ -724,24 +697,22 @@ def fingerprint(path):
                 return hashlib.sha256(fh.read()).hexdigest()
         return f"special:{stat.S_IFMT(st.st_mode)}"
     except OSError as e:
-        # Never raise for one file: a file planted WITHOUT read permission
-        # would otherwise stop the very sweep that has to remove it.
+        # Never raise: a file planted WITHOUT read permission would stop the
+        # sweep that has to remove it.
         return f"unreadable:{e.errno}"
 
 
 def is_protected(rel):
-    """Every place the model must never change: the kit's tools (the scheduler
-    runs them), git hooks and config (every commit runs them), Obsidian plugin
-    code (Obsidian runs it), Claude settings at ANY depth (start Claude in a
-    subfolder later and it loads them) and every file Claude Code reads as
-    instructions, in any letter case (on macOS and Windows `claude.md` IS
-    `CLAUDE.md`). Git's config and hooks at ANY depth too: a `.git` folder
-    planted in a subfolder is a repository of its own, and its config can
-    name a program (`core.fsmonitor`) that every `git status` there runs —
-    many shell prompts run one the moment you enter the folder. And editor
-    tasks (`.vscode/`), which can be set to run when the folder is opened.
-    A plugin's data.json is not here: an open Obsidian rewrites
-    it all the time, so it is put back instead (restore_plugin_settings)."""
+    """Every place the model must never change, because something runs or
+    loads it: the kit's tools (the scheduler), Obsidian plugin code,
+    editor tasks (`.vscode/`, can run when the folder opens), Claude
+    settings at ANY depth and every file Claude Code reads as instructions,
+    in any letter case (`claude.md` IS `CLAUDE.md` on macOS and Windows).
+    Git config and hooks at ANY depth: a planted `.git` is a repository of
+    its own, and `core.fsmonitor` in its config runs on every `git status`
+    there, which many shell prompts call on entering the folder.
+    A plugin's data.json is excluded: an open Obsidian rewrites it
+    constantly, so it is put back instead (restore_plugin_settings)."""
     parts = rel.split("/")
     low = [s.lower() for s in parts]
     if rel.startswith(RUNNER_OWNED) or "__pycache__" in low:
@@ -767,11 +738,10 @@ GIT_RUN_FILES = {"config", "config.worktree", "commondir", "gitdir"}
 
 
 def looks_like_git_dir(path):
-    """A repository folder needs no `.git` name: git accepts any folder with
-    a HEAD and objects/refs (a "bare" repository), or a HEAD with a pointer to
-    another one — and a shell prompt that runs `git status` on entering that
-    folder runs whatever its config names. Notes never contain a file called
-    HEAD, so this is cheap and does not misfire."""
+    """A repository needs no `.git` name: git accepts any folder with HEAD
+    plus objects/refs (bare) or HEAD plus a pointer to another one, and a
+    shell prompt running `git status` there runs whatever its config names.
+    Notes never contain a file called HEAD, so this does not misfire."""
     try:
         if not stat.S_ISREG(os.lstat(path / "HEAD").st_mode):
             return False
@@ -822,8 +792,8 @@ def protected():
 
 
 def remove(p):
-    """Gone, whatever it is now: a link (never followed), a folder, or anything
-    else — a file, but also a named pipe or socket, which are neither."""
+    """Remove whatever it is: a link (never followed), a folder, a file, a
+    named pipe or a socket."""
     if not os.path.islink(p) and p.is_dir():
         shutil.rmtree(p)
     elif os.path.lexists(p):
@@ -831,9 +801,9 @@ def remove(p):
 
 
 def real_dirs(path):
-    """Make every folder from the vault down to `path` a real folder: a link or
-    a file in the way is removed, never written through. Writing "the old
-    settings" through a planted link would put them wherever it points."""
+    """Make every folder from the vault down to `path` a real folder. A link
+    or file in the way is removed, never written through: that would put the
+    data wherever a planted link points."""
     cur = VAULT
     for part in path.relative_to(VAULT).parts[:-1]:
         cur = cur / part
@@ -844,9 +814,9 @@ def real_dirs(path):
 
 
 def safe_write(path, data):
-    """Write `data` to `path` as a plain file — through real folders only, and
-    never INTO something that is not a plain file: opening a named pipe for
-    writing blocks until someone reads it, which would freeze the rollback."""
+    """Write `data` as a plain file, through real folders only and never
+    INTO a non-regular file: opening a named pipe for writing blocks until
+    someone reads it, which would freeze the rollback."""
     real_dirs(path)
     if os.path.lexists(path):
         st = os.lstat(path)
@@ -867,12 +837,11 @@ def plugin_settings():
 
 
 def restore_plugin_settings(saved):
-    """Put every plugin's data.json back the way it was before the run. A run
-    has no business changing them; an open Obsidian keeps its own settings in
-    memory and writes them again, so nothing legitimate is lost — but a
-    command smuggled into one is gone before Obsidian next loads it. Each entry
-    on its own: one that fails does not stop the others, and any failure is
-    raised at the end, so the caller fails closed."""
+    """Put every plugin's data.json back as it was before the run. An open
+    Obsidian keeps its settings in memory and rewrites them, so nothing
+    legitimate is lost, but a command smuggled into one is gone before
+    Obsidian loads it. Each entry separately; failures are raised at the
+    end so the caller fails closed."""
     reset, failed = [], []
     for rel, data in saved.items():
         try:
@@ -913,10 +882,9 @@ def small_text(path, limit=256):
 
 
 def harmless(rel, before):
-    """The one change to a CLAUDE.md the review makes on purpose: a NEW folder
-    gets the pointer that pulls in its index.md — word for word the kit's, or
-    one this vault's folders already carry (a translated vault translates its
-    comment). Anything else is not."""
+    """The one CLAUDE.md change the review may make: a NEW folder gets the
+    pointer to its index.md, word for word the kit's or one this vault's
+    folders already carry (a translated vault translates its comment)."""
     if rel in before or Path(rel).name.lower() != "claude.md":
         return False
     path = VAULT / rel
@@ -935,11 +903,9 @@ def harmless(rel, before):
 
 
 def files_copy(before):
-    """Byte copies of every protected plain file, taken before the run. `git
-    reset` puts back only what git tracks — and a repository nested in a
-    subfolder, plugin code in a vault whose .gitignore leaves out .obsidian/,
-    an untracked editor task: git never had them. Detecting a change there
-    and then leaving it in place would be a rollback in name only."""
+    """Byte copies of every protected plain file, taken before the run.
+    `git reset` restores only tracked files; a nested repository, plugin
+    code under an ignored .obsidian/ or an untracked editor task are not."""
     saved = {}
     for rel, fp in before.items():
         if fp.startswith(("link:", "special:", "unreadable:")):
@@ -955,9 +921,8 @@ def files_copy(before):
 
 
 def restore_files(saved_files, before):
-    """Every saved file that is no longer what it was, written back — with
-    its permissions: a git hook written back without its executable bit is
-    a hook git silently skips."""
+    """Write back every saved file that changed, with its permissions: git
+    silently skips a hook without its executable bit."""
     now = protected()
     for rel, (data, mode) in saved_files.items():
         path = VAULT / rel
@@ -971,9 +936,8 @@ def restore_files(saved_files, before):
 
 
 def hooks_copy():
-    """Byte copies of what `git reset` cannot restore: hooks and .git/config
-    are not part of the history. Key "" holds the config. Links are not
-    copied — what they point to is not the vault's."""
+    """Byte copies of hooks and .git/config, which `git reset` cannot
+    restore. Key "" holds the config. Links are not copied."""
     hooks = VAULT / ".git" / "hooks"
     saved = {}
     if hooks.is_dir() and not os.path.islink(hooks):
@@ -985,9 +949,8 @@ def hooks_copy():
 
 
 def sweep(before):
-    """Remove every protected entry that was not there before the run —
-    computed afresh from the disk, so it works even when the check that
-    found the problem could not finish."""
+    """Remove every protected entry that was not there before the run.
+    Computed afresh from disk, so it works even if the check failed."""
     for rel in sorted(protected(), key=lambda r: -r.count("/")):
         if rel not in before:
             try:
@@ -1012,10 +975,9 @@ def _restore_hooks(saved_hooks):
 
 
 def clear_pycache():
-    """`.tools/__pycache__` is only a cache — and the one place in .tools the
-    backstop cannot fingerprint, because it changes whenever a tool runs. A
-    planted .pyc there would run instead of its source on the next import,
-    so it goes after every model run; Python rebuilds it."""
+    """`.tools/__pycache__` changes whenever a tool runs, so the backstop
+    cannot fingerprint it, and a planted .pyc would run instead of its
+    source. Removed after every model run; Python rebuilds it."""
     p = TOOLS / "__pycache__"
     try:
         if os.path.islink(p) or p.is_file():
@@ -1031,9 +993,9 @@ RUNNER_STATE = [".tools/logs/.running", ".tools/logs/last-success", ".tools/logs
 
 
 def exclude_runner_state():
-    """This machine's runner state stays out of the history even where the
-    vault's .gitignore is the person's own (an adopted vault): git's per-clone
-    list .git/info/exclude is nobody's file but this machine's."""
+    """Keep this machine's runner state out of the history via the per-clone
+    .git/info/exclude, even where .gitignore is the person's own (an adopted
+    vault)."""
     p = VAULT / ".git" / "info" / "exclude"
     try:
         text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
@@ -1058,10 +1020,9 @@ def rolled_back_dir():
 
 
 def kept_name(rel):
-    """Where a kept file goes: under rolled_back_dir(), with `.kept` appended.
-    Inert on purpose — a kept `.git/config`, `HEAD` or hook under its own
-    name would rebuild a repository (or an editor task, a CLAUDE.md) that
-    git, an editor or Claude might act on once someone opens that folder."""
+    """Where a kept file goes: under rolled_back_dir() with `.kept` appended,
+    so a kept `.git/config`, `HEAD`, hook, editor task or CLAUDE.md is inert
+    and nothing (git, an editor, Claude) acts on it."""
     return rolled_back_dir() / (rel + ".kept")
 
 
@@ -1077,10 +1038,9 @@ def keep_aside(rel):
 
 
 def keep_changed(base):
-    """Every tracked file that differs from the starting point, copied aside
-    before `git reset` puts it back: the run's edits as evidence — and an
-    edit the person made to a note meanwhile, which would otherwise be gone
-    for good (the run only starts while someone is at the computer)."""
+    """Copy aside every tracked file that differs from the starting point,
+    before `git reset`: the run's edits as evidence, and any edit the person
+    made meanwhile (runs start only while someone is at the computer)."""
     r = git("diff", "--name-only", "-z", base)
     kept = []
     for rel in (r.stdout.split("\0") if r.returncode == 0 else []):
@@ -1106,10 +1066,9 @@ def reset_to(base, start):
 
 
 def set_aside_new(untracked_before):
-    """Files the rolled-back run created: `git reset` leaves them, and the next
-    run would commit them as the week's own work. Moved under .git/ (never
-    part of the history), not deleted — the run only starts while someone is
-    at the computer, and one of them may be a note the person wrote meanwhile."""
+    """Files the rolled-back run created: `git reset` leaves them and the
+    next run would commit them. Moved under .git/ (never in the history),
+    not deleted: one may be a note the person wrote meanwhile."""
     now = untracked()
     if untracked_before is None or now is None:
         say("could not tell which files the run created — new files, if any, were left in place")
@@ -1130,11 +1089,11 @@ def set_aside_new(untracked_before):
 
 
 def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None, start=None):
-    """Undo the whole run: new things in protected places removed (links
-    first, before anything is written), git config and hooks restored byte for
-    byte, tracked files back to the starting point, plugin settings put back.
-    Each step on its own, so one failure does not leave the rest undone. The
-    run's log survives — it is the evidence."""
+    """Undo the whole run: new things in protected places removed (before
+    anything is written), git config and hooks restored byte for byte,
+    tracked files reset, plugin settings put back. Each step runs on its own
+    so one failure does not stop the rest. The run's log is kept as
+    evidence."""
     log = log_path().read_bytes() if log_path().is_file() and not os.path.islink(log_path()) else b""
     del HELD[:]
     start = start or {}
@@ -1228,9 +1187,9 @@ def run_claude(cmd, prompt, cfg):
 
 
 def flagged_since(offset):
-    """Was THIS run stopped by the safeguards? Only the part of today's log
-    written since the run started counts — an earlier run's abort must not
-    turn a later network error into the wrong diagnosis."""
+    """Was THIS run stopped by the safeguards? Only today's log since the
+    run started counts, so an earlier abort cannot mislabel a later
+    network error."""
     try:
         with open(log_path(), encoding="utf-8", errors="replace") as fh:
             fh.seek(offset)
@@ -1283,10 +1242,10 @@ def prune_logs(keep=12):
 
 
 def transcribe_memos():
-    """Voice memos become captures on every tick, not once a week — no model
-    call, nothing leaves the machine (transcribe.py). Only when switched on
-    (`transcribe.py --auto on`): the first use downloads a speech model, and
-    that must not start unasked in a background job."""
+    """Voice memos become captures on every tick (transcribe.py: no model
+    call, nothing leaves the machine). Only when switched on
+    (`transcribe.py --auto on`): the first use downloads a speech model,
+    which must not start unasked in a background job."""
     script = TOOLS / "transcribe.py"
     if not script.is_file():
         return
@@ -1321,9 +1280,8 @@ def cmd_run(now=False):
     last = last_success()
     if not now and not is_due(today(), last, cfg["weekday"]):
         return 0
-    # ... and not tried and failed today already: a failure retried on every
-    # tick burns usage and fills the history. Tomorrow is soon enough. A run
-    # the computer's sleep cut off did not fail, and may try again.
+    # ... and not already failed today: retrying on every tick burns usage.
+    # A run cut off by sleep did not fail and may try again.
     tried = last_run()
     if not now and tried.get("date") == today().isoformat() and tried.get("status") and not tried.get("slept"):
         return 0
@@ -1331,7 +1289,7 @@ def cmd_run(now=False):
     hour = dt.datetime.now().hour
     if not now and quiet_hours(hour, cfg["quiet_from"], cfg["quiet_until"]):
         return defer(f"quiet hours ({hour}:00)")
-    # (d) is anyone actually using the machine? (lesson 2)
+    # (d) is anyone using the machine? (guard 2)
     idle = None
     if not now:
         idle = idle_seconds()
@@ -1364,8 +1322,8 @@ def cmd_run(now=False):
 def _run_locked(cfg, cmd, days, idle):
     stamp = today().isoformat()
     say(f"start — last success {days} days ago" + (f", idle {idle}s" if idle is not None else ""))
-    # Step 0: whatever the week left uncommitted goes into its own commit, so
-    # it is unambiguous what THIS run did — and undo never touches it.
+    # Step 0: the week's uncommitted work gets its own commit, so THIS run's
+    # changes stay separate and undo never touches it.
     exclude_runner_state()
     if git_dirty():
         if not commit_all(f"Starting point before the weekly run of {stamp}"):
@@ -1376,7 +1334,7 @@ def _run_locked(cfg, cmd, days, idle):
             return 2
         say("starting point committed")
     base = git_head()
-    # Step 1: set aside what would abort the run (lesson 1)
+    # Step 1: set aside what would abort the run (guard 1)
     excluded = set_aside()
     if dirty_beyond_logs():     # the log line alone is no reason to claim notes moved
         commit_all(f"Weekly run {stamp}: notes set aside before it started")
@@ -1399,8 +1357,8 @@ def _run_locked(cfg, cmd, days, idle):
             return sorted(k for k in set(before) | set(after)
                           if before.get(k) != after.get(k) and not harmless(k, before))
         except Exception as e:      # noqa: BLE001 — fail CLOSED
-            # A check that cannot look has to assume the worst. Letting the
-            # exception through would skip the comparison and keep the changes.
+            # A check that cannot look assumes the worst; letting the
+            # exception through would keep the changes.
             say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
             return [f"(the check itself failed: {e.__class__.__name__})"]
 
@@ -1432,11 +1390,11 @@ def _run_locked(cfg, cmd, days, idle):
                 note.unlink()
         say(f"done ({took}s)")
     prune_logs()
-    # Step 3: partial work is committed whatever happened (lesson 1)
+    # Step 3: partial work is committed whatever happened (guard 1)
     if git_dirty():
         # Only a success says "Review": search.py --stats counts review days
-        # from these messages, and a failed run is not a review that happened.
-        # The model runs no git, so this one commit IS the review's work.
+        # from these messages. The model runs no git, so this commit holds
+        # the review's work.
         commit_all(f"Review {stamp} (unattended)" if status == 0
                    else f"Weekly run {stamp}: partial work saved after an abort")
     LAST_RUN.write_text(json.dumps({"date": stamp, "base": base, "head": git_head(),
@@ -1586,10 +1544,9 @@ def plan_install(platform, python, script):
         plist = home / "Library" / "LaunchAgents" / f"{label}.plist"
         cfg = load_config()
         cmd = claude_cmd(cfg) or ["claude"]
-        # node too: Claude Code runs the person's hooks in this run as well, they
-        # are often `node …`, and nvm puts node outside every standard path —
-        # without it each hook fails with "node: command not found" in the log
-        # (after a node upgrade under nvm, run `install` once more).
+        # node too: Claude Code runs the person's hooks here, often `node …`,
+        # and nvm puts node outside the standard paths (after a node upgrade
+        # under nvm, run `install` again).
         node = shutil.which("node")
         path = os.pathsep.join(dict.fromkeys([str(Path(cmd[0]).parent)] + ([str(Path(node).parent)] if node else [])
                                              + [str(home / ".local" / "bin"),
@@ -1708,13 +1665,12 @@ def cmd_install(a):
     LOGS.mkdir(parents=True, exist_ok=True)
     exclude_runner_state()
     if last_success() is None:
-        # Without this the very first tick finds "never succeeded" and starts
-        # a full review minutes after installing — on the person's usage.
+        # otherwise the first tick finds "never succeeded" and starts a full
+        # review minutes after installing
         STAMP.write_text(today().isoformat() + "\n", encoding="utf-8")
-    # Its own two files get their own commit — otherwise the first run would
-    # commit them as "the week's starting point". Only these paths, never -A:
-    # whatever else is uncommitted belongs to the person. (No "review" in the
-    # message: search.py --stats counts review days from those words.)
+    # Commit only its own two files (never -A: other uncommitted work is the
+    # person's). No "review" in the message: search.py --stats counts review
+    # days from that word.
     if vault_is_its_own_repo():
         mine = [str(CONFIG.relative_to(VAULT)), str(TERMS_FILE.relative_to(VAULT))]
         git("add", "--", *mine)

@@ -7,32 +7,29 @@
                                --expect 30-knowledge/people/Jane-Doe.md
     python3 .tools/exam.py --backend qmd         # same exam against qmd, to compare (optional)
 
-(Windows: `py -3`.) "Works for me" is not a measurement. A vault answers
-questions by first FINDING the right note, and that step fails silently: a
-renamed note, a capture filed without the word you would search for, a
-search change that ranks a log above the note it mentions — the answer is
-then built on the wrong page, and it still sounds confident.
+(Windows: `py -3`.) Answers depend on finding the right note first, and
+that step fails silently (a renamed note, a capture without the word you
+would search for, a ranking change).
 
-So every question here has three parts: the question as the person would
-ask it, the terms an agent would search for (that is how `brain-ask` uses
-`search.py`), and the note that must come out. The exam runs those terms
-through the very ranking an agent gets (`search.py`'s `rank`) and counts a
-question as answered when the expected note is among the first three.
+Each question has three parts: the question as the person would ask it,
+the terms an agent would search for (as `brain-ask` uses `search.py`), and
+the note that must come out. The terms go through the same ranking an agent
+gets (`search.py`'s `rank`); a question counts as answered when the
+expected note is among the first three.
 
-Two numbers, both honest about what they are:
-  found in top 3    the share of questions an agent would answer from the
-                    right note on its first read
+  found in top 3    share of questions answered from the right note on
+                    the first read
   MRR               mean reciprocal rank: 1.0 when the note is always
                     first, 0.5 when it is always second, 0 when missing
 
 A question whose expected note no longer exists is reported as STALE, not
-as a miss: the note moved, and the exam needs updating — counting it as a
-search failure would blame the search for a rename.
+as a miss: update the question, the search is not at fault.
 
-The questions live in `.tools/exam.json`, part of the brain and committed
-with it. The weekly review proposes one or two new ones from what was filed
-that week; the person keeps or drops them. No model call, no network, no
-cost. Python standard library only. Works on macOS, Windows and Linux.
+The questions live in `.tools/exam.json`, committed with the brain. The
+weekly review proposes one or two new ones; the person keeps or drops
+them. While BRAINWARDEN_UNATTENDED is set only `--record` runs. No model
+call, no network. Python standard library only. Works on macOS, Windows
+and Linux.
 """
 from __future__ import annotations
 
@@ -76,19 +73,16 @@ def save(questions):
 
 
 def norm(rel):
-    """One spelling per path. macOS stores `ö` in file names decomposed (o +
-    combining diaeresis, NFD) while a typed question holds it composed (NFC):
-    identical on screen, different as strings. Measured on a real vault —
-    `Französisch-Problem.md` came second in the ranking and still counted as
-    not found."""
+    """One spelling per path: macOS stores `ö` in file names decomposed
+    (NFD), a typed question holds it composed (NFC). Same on screen,
+    different as strings."""
     return unicodedata.normalize("NFC", rel.replace("\\", "/"))
 
 
 def notes_present():
-    """Every note in the vault, keyed by its NFC spelling. Existence cannot be
-    asked of the file system directly: macOS finds `ö` however it is encoded,
-    Linux and Windows only find the exact bytes — and a vault synced from a
-    Mac carries decomposed names onto those systems."""
+    """Every note in the vault, keyed by its NFC spelling. Not asked of the
+    file system: macOS finds `ö` in either form, Linux and Windows only the
+    exact bytes, and a vault synced from a Mac carries NFD names there."""
     out = set()
     for dirpath, dirnames, filenames in os.walk(VAULT):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -246,8 +240,8 @@ def main():
     ad.add_argument("--expect", required=True, action="append")
     a = ap.parse_args()
     if os.environ.get("BRAINWARDEN_UNATTENDED") and (a.cmd == "add" or a.backend != "search"):
-        # The unattended review may measure, nothing else: a new question
-        # needs the person's OK, and another search program is another program.
+        # unattended it may only measure: a new question needs the person's
+        # OK, and another backend starts another program
         print("refused while unattended: only `exam.py --record` (add questions in a normal chat)")
         return 2
     return cmd_add(a) if a.cmd == "add" else cmd_exam(a)

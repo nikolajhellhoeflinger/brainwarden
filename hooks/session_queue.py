@@ -1,40 +1,22 @@
 #!/usr/bin/env python3
 """Brainwarden — session queue (Claude Code "SessionEnd" hook, opt-in).
 
-The gap this closes: the capture check only fires when nothing has reached
-the brain for hours, and the weekly review's sweep looks at changed files
-and git logs. Someone who works in Odoo, on the phone and in a warehouse
-leaves no such traces. Their week is invisible to both.
+When a session ends it appends one line to a queue file: when, in which
+project, which session, why it ended. The weekly review reads the queue and
+asks about sessions it has not seen: "what came out of this?" This covers
+work that leaves no changed files or git logs behind.
 
-This hook leaves a trace. When a session ends it appends ONE line to a
-queue file — when, in which project, which session, why it ended. That is
-all. The weekly review reads the queue, and for sessions it has not seen it
-asks the one question the machine cannot answer: "what came out of this?"
+It never:
 
-What it deliberately does NOT do:
+  - reads the transcript or records its path (the session id is enough);
+  - calls a model (`SessionEnd` hooks share a 1.5-second budget);
+  - writes into the vault (the queue lives next to the config; only the
+    review turns it into notes, with a human present);
+  - records content.
 
-  - It does not read the transcript, and it does not even write
-    down where the transcript IS. The path was in the file for a while and
-    nothing ever read it — a pointer to everything that was said, kept for
-    no purpose, is exactly the thing this hook promises not to keep. The
-    session id is enough to find a session again.
-  - It does not call a model. `SessionEnd` hooks share a 1.5-second budget
-    (documented); anything that thinks does not fit and would make the hook
-    a liability rather than a net.
-  - It does not write into the vault. The queue lives next to the config,
-    and only the review turns any of it into a note — with a human present.
-  - It records no content. When, where, which session, why it ended.
-    Nothing said.
-
-That last point is not squeamishness. A system that quietly writes down
-what people said stops being used — the reliable way to kill a personal
-knowledge system is to make it feel like surveillance.
-
-It appends rather than rewrites, and trims with a temp file plus
-`os.replace`. Rewriting the whole file on every session end meant that a
-hook killed at the 1.5-second mark left an empty queue behind: the file is
-truncated the moment it is opened for writing, so the crash window covered
-the entire history rather than the last line.
+It appends instead of rewriting, and trims via a temp file plus
+`os.replace`, so a hook killed at the 1.5-second mark cannot truncate the
+queue.
 
 Install (opt-in):
 
@@ -76,11 +58,9 @@ def trim(path):
     place, so an interrupted trim leaves the old queue intact."""
     tmp = path + ".tmp"
     try:
-        # A trim that was killed at the 1.5-second mark leaves an empty `.tmp`
-        # lying next to the queue forever. It is harmless, but it is the only
-        # visible trace that something went wrong here, and left in place it
-        # reads as evidence long after the run it belonged to. Clear it on
-        # the way in; `harvest.py --queue` reports one if it finds it.
+        # A trim killed at the 1.5-second mark leaves a stale `.tmp`; clear
+        # it so it is not mistaken for a current failure later
+        # (`harvest.py --queue` reports one if it finds it).
         if os.path.exists(tmp):
             os.remove(tmp)
         with open(path, encoding="utf-8", errors="ignore") as fh:
@@ -98,15 +78,10 @@ def trim(path):
 
 
 def read_stdin():
-    """The payload as text, whatever the shell hands us.
-
-    Two ways this used to fail. A closed stdin (`0<&-`) makes `sys.stdin`
-    None, and `None.isatty()` raised — the hook then did nothing at all.
-    And reading through the text layer uses the LOCALE encoding, so on a
-    cp1252 Windows console a vault path like `Größenwahn Brain` arrived as
-    `GrÃ¶ÃŸenwahn Brain`. The payload is JSON, which is utf-8 by
-    definition, so decode the raw bytes and say so.
-    """
+    """The payload as text. A closed stdin (`0<&-`) makes `sys.stdin` None.
+    The raw bytes are decoded as utf-8 (JSON is utf-8); the text layer would
+    use the locale encoding and garble non-ASCII paths on a cp1252 Windows
+    console."""
     stream = sys.stdin
     if stream is None:
         return ""
@@ -134,10 +109,8 @@ def main():
     if not isinstance(payload, dict):      # valid JSON, unexpected shape
         payload = {}
 
-    # A session that is being picked up again has not ended. The documented
-    # reasons are `clear`, `resume`, `logout`, `prompt_input_exit`,
-    # `bypass_permissions_disabled` and `other` — everything except `resume`
-    # is an ending worth one line.
+    # Documented reasons: `clear`, `resume`, `logout`, `prompt_input_exit`,
+    # `bypass_permissions_disabled`, `other`. A resumed session has not ended.
     reason = payload.get("reason") or "other"
     if clean(reason) == "resume":
         return 0

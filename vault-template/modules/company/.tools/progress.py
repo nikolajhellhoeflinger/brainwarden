@@ -5,39 +5,26 @@
     python3 .tools/progress.py --open     # every file still carrying gaps
     python3 .tools/progress.py --by-role  # who has to answer how much
 
-A shared vault ships as scaffolding: the structure is right and the house
-rules are missing. Those missing rules come in TWO shapes, and an earlier
-version of this script only counted one of them — which made a freshly
-assembled vault report "1 open gap" when nine more were sitting in plain
-sight:
+A company vault ships as scaffolding with the house rules missing. Gaps
+come in two shapes, both counted:
 
-  - **`<angle-bracket>` fields** — `owner: <role that owns this vault>`,
-    `**Who may release content:** <role(s)>`. This is the common shape;
-    a fresh company vault ships nine of them across three files, and
-    `hygiene.py` cannot see them because `<role that owns this vault>` is
-    a perfectly non-empty value.
+  - **`<angle-bracket>` fields**: `owner: <role that owns this vault>`,
+    `**Who may release content:** <role(s)>`. `hygiene.py` cannot see
+    them, since the placeholder is a non-empty value.
   - **`TO FILL IN (role)` markers** (a translated vault uses its own
-    word, e.g. `AUSFÜLLEN`) — used where the gap is a whole decision
-    rather than one field, e.g. how copies are distributed.
+    word, e.g. `AUSFÜLLEN`), where the gap is a whole decision rather
+    than one field.
 
-Both are counted. Command examples in backticks (`search.py <terms>`) are
-not, and neither are the template files, which keep their placeholders
-forever by design.
+Command examples in backticks (`search.py <terms>`) are not counted, nor
+are template files, which keep their placeholders.
 
-Two numbers describe the vault's state, and only one of them matters.
+The summary leads with **files verified**: a file counts only with
+`status: stable` AND a `verified:` line (a human read it and said yes).
+Nothing in this repo sets that automatically. **Gaps closed** only means
+someone typed something into a field.
 
-  - **Gaps closed** is the easy number and the misleading one. A field
-    stops being counted when someone types anything into it, and typing
-    something is not the same as it being right.
-  - **Files verified** is the honest one. A file counts only with
-    `status: stable` AND a `verified:` line — a human read it and said
-    yes. That is the line between a draft and something a colleague may
-    act on, and nothing in this repo sets it automatically.
-
-So the summary leads with the second number. A vault at "90% of gaps
-closed, 0 files verified" is not 90% done; it is 0% done with tidier text.
-
-Exit code is 0 unless something is actually wrong with the vault.
+Read-only. Exit code is 0 unless something is actually wrong with the
+vault.
 """
 import argparse
 import collections
@@ -45,56 +32,35 @@ import os
 import re
 import sys
 
-# A real gap always names who answers it: `TO FILL IN (bookkeeping): …`.
-# The bare word appears far more often in prose ABOUT the gaps — every
-# process note explains its own markers, and the roles folder does it once
-# per file. Counting those made the vault look a quarter emptier than it
-# is, and no amount of answering would ever have driven the number down.
+# A real gap names who answers it: `TO FILL IN (bookkeeping): …`. The bare
+# word mostly appears in prose ABOUT the gaps, which must not count.
 GAP = re.compile(r"(?:TO FILL IN|AUSFÜLLEN)\s*\(([^)]{1,60})\)")
-# A placeholder that forgot its role: the marker sits in a quoted line and
-# is neither bold nor code — that is a real defect, nobody knows who to ask.
-# Case-SENSITIVE on purpose. In a translated vault the marker word is often
-# an ordinary verb in that language — German `ausfüllen` ("to fill in")
-# appears in normal sentences, and matching case-insensitively reported two
-# perfectly fine ones as defects. The shouting spelling is the marker.
+# A placeholder without a role: the marker in a quoted line, neither bold
+# nor code. Case-SENSITIVE: German `ausfüllen` is an ordinary verb; only
+# the upper-case spelling is the marker.
 ORPHAN = re.compile(r"^\s*>.*(?<![*`])(?:TO FILL IN|AUSFÜLLEN)(?![*`])(?!\s*\()", re.M)
-# An unfilled `<…>` field, in the only two places one can legitimately sit:
-# a frontmatter line, or a bold-label prose line. Anything inside backticks
-# is a command example (`search.py <terms>`), never a gap — that distinction
-# is the whole reason this is two narrow patterns instead of one broad one.
-# FIELD deliberately does not require a closing `>`: the longest field in
-# the shipped `About this vault.md` wraps across two lines, so every
-# line-based scan that demanded `<…>` missed exactly the field that
-# describes what the vault is FOR.
+# An unfilled `<…>` field in a frontmatter line or a bold-label prose line;
+# inside backticks it is a command example, never a gap. FIELD needs no
+# closing `>`: a shipped field in `About this vault.md` wraps across lines.
 FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[ \t]*<[^`\n]", re.M)
 LABEL = re.compile(r"^\*\*[^*\n]+:\*\*[ \t]*<[^`\n]", re.M)
 SKIP_DIRS = {".git", ".obsidian", ".tools", ".claude", "_templates"}
-# The archive is cold storage: a retired note keeps whatever markers it had,
-# and counting them means the number can never reach zero. Recognised by
-# NUMBER, not by name — a German vault carries `90-archiv`, and matching the
-# English spelling meant the exemption silently stopped applying in exactly
-# the vault that had translated the rest as the runbook asks.
+# The archive is cold storage: retired notes keep their markers. Matched by
+# number, not name (`90-archiv`).
 SKIP_PREFIXES = ("90-",)
-# Files that TALK about the gaps rather than carrying one, and files whose
-# placeholders are permanent by design. Counting the rules sheet or a note
-# template as an open gap would mean the vault can never reach zero. The
-# leading underscore is the structural half of this: `_template.md` is
-# `_vorlage.md` in a translated vault, and every `_`-prefixed file in this
-# kit is a template that keeps its tokens forever.
+# The rules sheet TALKS about gaps rather than carrying one. Every
+# `_`-prefixed file is skipped too: a template (`_template.md`, translated
+# `_vorlage.md`) keeps its tokens forever.
 SKIP_FILES = {"CLAUDE.md"}
-# Fallback only — the vault's own CLAUDE.md is the authority, see
-# status_scale(). Position 1 is the released state ("stable"), which is the
-# one number this tool exists to report.
+# Fallback only: the vault's own CLAUDE.md is the authority (status_scale()).
+# Position 1 is the released state ("stable").
 VALIDITY = ("draft", "stable", "deprecated")
 
 
 def status_scale(vault):
-    """The `status:` values THIS vault uses, in its own CLAUDE.md's order.
-
-    A translated vault writes `status: entwurf | gültig | überholt`. Matching
-    the English `stable` then reported "0 files verified" forever — on the
-    one number this tool leads with, in the one vault that had followed the
-    runbook. The ORDER is what the kit freezes, not the words."""
+    """The `status:` values THIS vault uses, in its own CLAUDE.md's order
+    (a translated vault writes `status: entwurf | gültig | überholt`). The
+    kit freezes the ORDER, not the words."""
     try:
         with open(os.path.join(vault, "CLAUDE.md"), encoding="utf-8-sig",
                   errors="ignore") as fh:
@@ -139,8 +105,7 @@ def main():
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    # default: the vault this script lives in (.tools/..), like the other tools —
-    # "." measured whatever folder the shell happened to stand in
+    # default: the vault this script lives in (.tools/..), like the other tools
     ap.add_argument("vault", nargs="?", default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     ap.add_argument("--open", action="store_true", help="list files with gaps")
     ap.add_argument("--by-role", action="store_true", help="group gaps by who answers")

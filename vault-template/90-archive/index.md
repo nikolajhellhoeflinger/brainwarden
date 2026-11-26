@@ -8,8 +8,7 @@ editing them. Everything in here is HISTORY: an agent may quote it as
 still holds true generally, that insight is extracted into
 [../30-knowledge/](../30-knowledge/index.md) instead of being reactivated
 here. Keep the original folder structure of what was moved, so old paths
-stay recognizable. Nothing is deleted here — that is the point of the
-folder.
+stay recognizable. Nothing is deleted here.
 **NOT here:** anything still live →
 [../10-projects/](../10-projects/index.md) or
 [../20-areas/](../20-areas/index.md). Wrong or embarrassing notes are

@@ -11,75 +11,55 @@
     python3 .tools/harvest.py --claude-export export.zip --show 0d1f2a3b
     python3 .tools/harvest.py --ics ~/Downloads/calendar.ics --days 90
 
-A new vault is empty, and an empty vault is useless. But the machine has
-been listening for months: Claude Code keeps session transcripts in
-`~/.claude/projects/` as plaintext JSONL (30 days by default — see
-`cleanupPeriodDays`). That is the richest material about how someone
-actually works that exists on their disk.
+Claude Code keeps session transcripts in `~/.claude/projects/` as
+plaintext JSONL (30 days by default, see `cleanupPeriodDays`). Most of what
+they hold is junk (system-prompt echoes, harness text, acknowledgements,
+duplicates), and much of it is recognisable by shape alone. This tool drops
+that without a model, so a model only looks at what might be worth keeping.
 
-The catch is well documented. An audit of 10,134 auto-captured memories in
-another system found 97.8% of them worthless — system-prompt echoes, cron
-noise, transient task state, duplicates, and hallucinated profiles of the
-user (github.com/mem0ai/mem0/issues/4573). Over 70% of that junk is
-recognisable WITHOUT a model, by shape alone. That is what this tool does:
-it throws away the obvious garbage for free, so a model only ever looks at
-what might be worth something.
+It never writes into the vault, never calls a model, and never decides
+what is worth keeping, only what is obviously NOT. Everything it prints is
+a candidate for a human; judging happens afterwards, on a small sample
+first, and only with consent.
 
-WHAT THIS TOOL DOES NOT DO — on purpose:
-  - it never writes into the vault
-  - it never calls a model, and costs nothing
-  - it never decides what is worth keeping; it decides what is obviously NOT
+Two more sources, read-only like the rest:
 
-Everything it prints is a candidate for a human to look at. The judging
-happens afterwards, on a small sample first, and only with consent.
-
-TWO MORE SOURCES the person already has, both read-only like the rest:
-
-  --claude-export PATH   The data export of the Claude app (Settings →
-      Privacy → Export data): the .zip as downloaded, the unzipped folder,
-      or the conversations.json inside it. By default it prints one line per
-      conversation — last activity, how many messages the PERSON wrote, a
-      short id, the title — newest first, and not one word of any message.
-      A chat archive is the most private file most people own; listing it
-      must not dump it. `--grep WORDS` narrows the list by title (every word
-      must occur; case and umlauts do not matter, `pruefung` finds
-      `Prüfung`), `--since` by last activity. `--show ID` prints the
-      person's own messages of exactly that one conversation, each cut to a
-      few hundred characters, so a capture can be written from it in a
-      normal chat. Claude's replies are never printed, in no mode: they are
-      the machine's words, and the premise of this tool is the human's.
+  --claude-export PATH   The Claude app's data export (Settings → Privacy →
+      Export data): the .zip, the unzipped folder, or its conversations.json.
+      By default one line per conversation, newest first: last activity,
+      how many messages the PERSON wrote, a short id, the title. Not one
+      word of any message. `--grep WORDS` narrows by title (every word must
+      occur; case and umlauts do not matter, `pruefung` finds `Prüfung`),
+      `--since` by last activity. `--show ID` prints the person's own
+      messages of exactly that one conversation, each cut to a few hundred
+      characters. Claude's replies are never printed, in no mode.
   --ics PATH   A calendar export. Prints the events of the next 120 days
-      (`--days N`) as lines in the Deadlines format, `- YYYY-MM-DD Summary`,
-      sorted. Only the DATE is kept: times are dropped, and a time given in
-      UTC (`...T233000Z`) counts as its UTC date, so a late-evening event
-      far from UTC can land one day off. A repeating event is not expanded:
-      it gets one line, marked "(repeats)", at its next date when the rule
-      is plain (FREQ=YEARLY/MONTHLY/WEEKLY, optionally INTERVAL, COUNT,
-      UNTIL and EXDATE), otherwise at its first date if that is still ahead.
-      An event that started before today is past, however long it lasts.
-      What a calendar says goes under "Unconfirmed" in Deadlines.md until
-      the person confirms it — a file is not a human.
+      (`--days N`) in the Deadlines format, `- YYYY-MM-DD Summary`, sorted.
+      Only the DATE is kept; a UTC time (`...T233000Z`) becomes this
+      machine's local date. A repeating event is not expanded: it gets one
+      line, marked "(repeats)", at its next date when the rule is plain
+      (FREQ=YEARLY/MONTHLY/WEEKLY, optionally INTERVAL, COUNT, UNTIL and
+      EXDATE), otherwise at its first date if that is still ahead. An event
+      that started before today is past, however long it lasts. Calendar
+      dates go under "Unconfirmed" in Deadlines.md until the person
+      confirms them.
 
-Both refuse to run unattended, like everything here except --queue.
+Everything except --queue refuses to run unattended.
 """
 import argparse, collections, contextlib, io, itertools, json, os, re, sys, unicodedata, zipfile
 from datetime import date, datetime, timedelta, timezone
 
-# Same reason as in search.py: on Windows the output stream falls back to the
-# console codepage as soon as it is piped or redirected, and `--candidates`
-# prints `→` on every line — so the one command that fills an empty vault
-# died with a UnicodeEncodeError exactly when someone tried to save its
-# output to a file.
+# As in search.py: on Windows a piped or redirected stream falls back to the
+# console codepage, and `--candidates` prints `→` (UnicodeEncodeError).
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError, OSError):
         pass
 
-# Follow CLAUDE_CONFIG_DIR: a second brain runs under its own config
-# directory, and its transcripts live there too. Reading ~/.claude from a
-# work vault would harvest the PRIVATE sessions into it — the exact
-# crossover the two-brain setup exists to prevent.
+# Follow CLAUDE_CONFIG_DIR: a second brain has its own config directory and
+# transcripts. Reading ~/.claude from a work vault would pull the PRIVATE
+# sessions into it.
 CONFIG = os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude"))
 SESSIONS = os.path.join(CONFIG, "projects")
 
@@ -99,8 +79,8 @@ NOISE = [
      "acknowledgement"),
     (re.compile(r"^\s*(continue|weiter machen|mach weiter|fortsetzen)\s*$", re.I),
      "continuation"),
-    # Injected by the harness, not typed by the human — these arrive as
-    # "user" events and are the single biggest source of false candidates.
+    # Injected by the harness as "user" events, not typed by the human: the
+    # biggest source of false candidates.
     (re.compile(r"^\s*(Base directory for this skill|"
                 r"Stop hook feedback:|"
                 r"Review this change for security|"
@@ -111,25 +91,21 @@ NOISE = [
     (re.compile(r"^\s*(Changed files|Unified diff|"
                 r"The user sent a new message while you were working)", re.I),
      "injected by the harness"),
-    # Pasted back INTO the chat: the assistant's own output, a terminal, a
-    # build log. The premise of this tool is "only what the human typed";
-    # a paste of the machine's words is the machine's words, however it got
-    # there. Measured on 1,542 real turns: removes 7 candidates, all junk.
+    # Pasted back INTO the chat (the assistant's output, a terminal, a build
+    # log): the machine's words, not the human's.
     (re.compile(r"⏺|\[\.{3}Truncated text #|Claude is temporarily overloaded|"
                 r"\bSearched for \d+ pattern|\bRecalled \d+ memor|"
                 r"^\s*▎|\w+@[\w-]+ ~ %|=> \[internal\] load|"
                 r"^\s*\[Image: source: /", re.M),
      "pasted machine output"),
-    # A pasted DOCUMENT (two or more Markdown headings): a skill body, a
-    # spec, terms and conditions. Documents are `brain-ingest`'s job —
-    # they go to 00-inbox/raw/, not into a capture. Removes 6, all junk.
+    # A pasted DOCUMENT (two or more Markdown headings): documents go to
+    # 00-inbox/raw/ for `brain-ingest`, not into a capture.
     (re.compile(r"^\s{0,3}#{1,3} \S[\s\S]*?^\s{0,3}#{1,3} \S", re.M),
      "pasted document (→ brain-ingest)"),
 ]
 
-# Attachments and paths are stripped BEFORE the signal test. A screenshot
-# called "Bildschirmfoto 2026-08-06 um 06.42.56.png" is not an appointment,
-# and it used to become one the moment dates were recognised at all.
+# Attachments and paths are stripped BEFORE the signal test: a screenshot
+# called "Bildschirmfoto 2026-08-06 um 06.42.56.png" is not an appointment.
 ATTACHMENT = re.compile(
     r"\[Image #\d+\]|\[Image: source:[^\]]*\]|https?://\S+|"
     r"@?\"/[^\"\n]+\"|"                                   # "…/a file.png"
@@ -146,18 +122,13 @@ SIGNAL = re.compile(
     r"we agreed|wir haben.{0,20}(entschieden|vereinbart)|"
     r"from now on|ab jetzt|ab sofort|künftig|"
     r"turns out|stellt sich heraus|zeigt sich)\b|"
-    # Real dates, not the word "date". An appointment is the one capture
-    # trigger that is almost never announced with a trigger WORD — "our
-    # conversation on Tuesday, 18.08., at 15:00" carried none of the above
-    # and was dropped. Clock times alone are deliberately NOT here: they
-    # matched "it is 22:33 now" and nothing worth keeping.
+    # Real dates: appointments rarely come with a trigger word. Clock times
+    # alone are left out; they match "it is 22:33 now".
     r"(?<![\d.,])(?:0?[1-9]|[12]\d|3[01])\.\s?(?:0?[1-9]|1[0-2])\.(?![\d.])|"
     r"(?<![\d.,])(?:0?[1-9]|[12]\d|3[01])\.\s?(?:Jan|Feb|Mär|Maer|Mar|Apr|Mai|"
     r"May|Jun|Jul|Aug|Sep|Okt|Oct|Nov|Dez|Dec)|"
     r"\b\d{4}-\d{2}-\d{2}\b|"
-    # The mirror of the line above for English ("August 18" vs "18. August").
-    # It adds nothing on the corpus this was measured against — that corpus
-    # is German — and it costs nothing there either: zero new candidates.
+    # English order ("August 18" vs "18. August").
     r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? "
     r"\d{1,2}(?:st|nd|rd|th)?\b|"
     r"\b(?:Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|"
@@ -181,12 +152,9 @@ def session_day(path):
         return None
 
 def human_lines(path, stats=None):
-    """Only what the HUMAN typed. Everything the assistant said is a
-    reformulation of it at best, and its own state at worst.
-
-    Read line by line: a transcript can be tens of megabytes (mostly one
-    enormous line per pasted image), and slurping it into a list to take
-    the head costs the file's size in RAM for no gain."""
+    """Only what the HUMAN typed; the assistant's words are at best a
+    reformulation. Read line by line: a transcript can be tens of
+    megabytes (one huge line per pasted image)."""
     try:
         with open(path, encoding="utf-8", errors="ignore") as fh:
             seen = 0
@@ -222,9 +190,8 @@ def classify(text):
     return None
 
 def excerpt(text, match):
-    """Show the phrase that made this a candidate, not the first 200
-    characters of the turn. In a 15,000-character turn those are almost
-    never the same thing, and the head is what a reader used to get."""
+    """Show the phrase that made this a candidate, not the head of the
+    turn: in a long turn the two rarely coincide."""
     flat = re.sub(r"\s+", " ", text).strip()
     if len(flat) <= EXCERPT + 60:
         return flat
@@ -276,8 +243,7 @@ def inventory(root):
 
 def candidates(root, since, cap):
     if not os.path.isdir(root):
-        # Without this, a typo in --root printed "0 turns looked at", which
-        # reads as "your sessions hold nothing" rather than "wrong path".
+        # otherwise a typo in --root reads as "your sessions hold nothing"
         print(f"No session directory at {root} — nothing to harvest.")
         return 1
     kept, dropped, seen = [], collections.Counter(), set()
@@ -358,11 +324,9 @@ def capture_check_state():
         print(f"  last spoke: {when}")
 
 def show_queue(root_cfg):
-    """The session queue, if the SessionEnd hook is installed.
-
-    One line per finished session: when, project, id, why it ended. No
-    content — the queue records THAT something happened, never what. The
-    weekly review walks it and asks about the sessions it has not seen."""
+    """The session queue, if the SessionEnd hook is installed: one line per
+    finished session (when, project, id, why it ended), no content. The
+    weekly review asks about the sessions it has not seen."""
     path = os.path.join(root_cfg, "state", "brainwarden-session-queue.tsv")
     if not os.path.exists(path):
         print("No session queue at " + path)
@@ -382,12 +346,8 @@ def show_queue(root_cfg):
         return 0
     rows = [l.split("\t") for l in
             open(path, encoding="utf-8", errors="ignore").read().splitlines() if l.strip()]
-    # An EMPTY queue file is not the same story as a queue with nothing new in
-    # it, and printing "sessions in queue: 0" told both stories in the same
-    # calm voice. Measured on a live machine: the file existed, the hook was
-    # installed and registered, sessions had been ending all day, and the
-    # queue was zero bytes — the review would have read that as a quiet week.
-    # A track that has died has to say so, or it is worse than no track.
+    # An EMPTY queue file may mean a broken hook, not a quiet week: say so
+    # instead of reporting a plain zero.
     if not rows:
         print(f"sessions in queue: 0 — but the queue file EXISTS ({path})")
         try:
@@ -420,11 +380,9 @@ def show_queue(root_cfg):
     for r in rows[-15:]:
         when, project, sid = (r + ["", "", ""])[:3]
         print(f"  {when}  {project}  {sid[:8]}")
-    print("\nThese are sessions, not findings. The weekly review asks what came")
-    print("out of the ones it has not seen yet — that question is the point.")
-    print("It is also only ONE track: whoever works in Cowork, in a browser or")
-    print("on a phone never appears here, and gets asked the cued questions")
-    print("instead (day by day · by counterpart · by open deadline).")
+    print("\nSessions, not findings: the weekly review asks what came out of the")
+    print("ones it has not seen. Work done in Cowork, a browser or on a phone is")
+    print("not listed; ask about it day by day, by counterpart and by open deadline.")
     capture_check_state()
     return 0
 
@@ -435,13 +393,10 @@ SHOW_CHARS = 600            # per message in --show: enough to write a capture f
 UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 def title_forms(text):
-    """Two spellings of a title, so a typed word finds it either way.
-
-    Titles are written with umlauts and searched without them: `pruefung`
-    must find `Prüfung`, and so must `prufung`. The first form spells ä as
-    ae (search.py's rule, see its fold()); the second strips the accent. A
-    title list is short and read by a human, so a few extra hits cost
-    nothing — a missed conversation is what costs."""
+    """Two spellings of a title, so `pruefung` and `prufung` both find
+    `Prüfung`: the first spells ä as ae (search.py's fold()), the second
+    strips the accent. Extra hits are cheap in a short list read by a
+    human; a missed conversation is not."""
     text = unicodedata.normalize("NFC", text.lower())
     out = []
     for t in (text.translate(UMLAUT), text):
@@ -452,13 +407,10 @@ def title_forms(text):
 def iter_json_array(fh, chunk=1 << 20):
     """The elements of a top-level JSON array, one at a time.
 
-    conversations.json holds the whole chat history in one array — for a
-    heavy user that can run to hundreds of megabytes, and several times that
-    as Python objects. A listing needs a few fields per
-    conversation, so it decodes one conversation, keeps what it needs and
-    lets the rest go. An element cut off by the end of the buffer fails to
-    decode; then more is read (twice as much each time, so one enormous
-    conversation does not get parsed a hundred times) and it is tried again."""
+    conversations.json can run to hundreds of megabytes, so each
+    conversation is decoded, used and released. An element cut off by the
+    buffer end fails to decode; then more is read (doubling each time, so a
+    huge conversation is not reparsed again and again) and it is retried."""
     dec = json.JSONDecoder()
     buf, pos, eof, want = "", 0, False, chunk
 
@@ -517,11 +469,8 @@ def iter_json_array(fh, chunk=1 << 20):
             buf, pos = buf[pos:], 0
 
 def export_conversations(path):
-    """Every conversation in an export, whichever of its three shapes PATH is.
-
-    The app hands out a .zip; people unzip it, or point straight at the one
-    file that matters. Refusing two of the three would only make someone
-    unpack or re-pack a file containing their entire chat history."""
+    """Every conversation in an export, whether PATH is the .zip, the
+    unzipped folder or conversations.json itself."""
     with contextlib.ExitStack() as stack:
         if os.path.isdir(path):
             found = [os.path.join(d, "conversations.json") for d, _, files in os.walk(path)
@@ -573,10 +522,10 @@ def message_text(msg):
                      and p.get("type", "text") == "text" and isinstance(p.get("text"), str)).strip()
 
 def printable(text):
-    """Titles, messages and calendar entries come from outside and go to a
-    terminal — and often straight into a model. An escape sequence in a title
-    can rewrite the terminal, a right-to-left override can hide what a line
-    says. Control and format characters go; a line break becomes a space."""
+    """Outside text goes to a terminal and often into a model: an escape
+    sequence can rewrite the terminal, a right-to-left override can hide
+    what a line says. Control and format characters go; a line break
+    becomes a space."""
     return "".join(" " if c in "\n\r\t" else c for c in text if c in "\n\r\t"
                    or unicodedata.category(c)[0] != "C")
 
@@ -586,9 +535,8 @@ def conversation_title(conv):
     return name[:100] or "(untitled)"
 
 def last_activity(conv):
-    """When the conversation last happened: its newest message. The
-    conversation's own timestamps count only when it has no messages —
-    they are bookkeeping of the app, and `--since` asks when someone wrote."""
+    """When someone last wrote: the newest message. The conversation's own
+    timestamps (app bookkeeping) count only when it has no messages."""
     stamps = [stamp(m.get("created_at")) for m in messages_of(conv)]
     return max(stamps) if any(stamps) else (stamp(conv.get("updated_at"))
                                             or stamp(conv.get("created_at")))
@@ -637,9 +585,9 @@ def claude_export(path, since, words, cap):
     return 0
 
 def show_conversation(path, wanted, cap):
-    """One conversation, the person's side only. A short id from the
-    listing is enough, but only if exactly one conversation carries it —
-    the wrong chat shown is a privacy slip, not a typo."""
+    """One conversation, the person's side only. A short id is enough only
+    if exactly one conversation carries it: showing the wrong chat is a
+    privacy slip."""
     hits = []
     try:
         for conv in export_conversations(path):
@@ -702,12 +650,9 @@ def ics_text(value):
     return re.sub(r"\s+", " ", printable(value)).strip()
 
 def ics_events(text):
-    """The properties of every VEVENT that matter here.
-
-    A component stack, not a flag: a VALARM inside an event carries its own
-    SUMMARY and DESCRIPTION, and a VTIMEZONE its own DTSTART (1970, usually).
-    With a simple "inside an event" flag the reminder text replaced the
-    event's title, and every time zone became an event."""
+    """The properties of every VEVENT that matter here. A component stack,
+    not a flag: a VALARM inside an event has its own SUMMARY, a VTIMEZONE
+    its own DTSTART, and neither may leak into the event."""
     stack, events, ev = [], [], None
     for line in text.split("\n"):
         m = CONTENT_LINE.match(line.rstrip("\r"))
@@ -739,10 +684,9 @@ def rrule_next(start, rrule, today, skip):
     Plain means FREQ=YEARLY/MONTHLY/WEEKLY with INTERVAL, COUNT, UNTIL, and
     at most BY-parts that repeat what DTSTART already says (Google writes
     `FREQ=WEEKLY;BYDAY=TU` for an event that starts on a Tuesday). Anything
-    else — DAILY, several weekdays, "the last Friday" — is not expanded:
-    a half-right expansion would put dates into Deadlines.md that are not
-    in the calendar. Dates that do not exist (31 April, 29 February in a
-    common year) are skipped, as RFC 5545 says, never moved."""
+    else (DAILY, several weekdays, "the last Friday") is not expanded: a
+    half-right expansion would put wrong dates into Deadlines.md. Dates
+    that do not exist (31 April, 29 February) are skipped, per RFC 5545."""
     rule = {}
     for part in rrule.upper().split(";"):
         key, _, val = part.partition("=")
@@ -842,10 +786,9 @@ def calendar(path, days):
 
 def main():
     if os.environ.get("BRAINWARDEN_UNATTENDED") and sys.argv[1:] != ["--queue"]:
-        # Unattended, only the queue: when and where sessions ended. The
-        # inventory and the candidates read the transcripts of every Claude
-        # session on this machine, --claude-export the whole chat archive,
-        # --ics the calendar — all of that needs the person in the chat.
+        # Unattended, only the queue. Everything else reads every session
+        # transcript, the chat archive or the calendar: the person must be
+        # in the chat.
         print("refused while unattended: only `harvest.py --queue` (transcripts in a normal chat)")
         return 2
     ap = argparse.ArgumentParser(add_help=True, description=__doc__.split("\n")[0])

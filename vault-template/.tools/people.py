@@ -12,45 +12,42 @@ and what to remember before you meet someone.
     python3 .tools/people.py linkedin <export.zip> # your LinkedIn export: who you really wrote with (names withheld)
        who/brief/revive … --linkedin <export.zip>  #   …and what you vouched for, as evidence
 
-(Windows: `py -3`.) A contact list knows that someone exists. A brain knows
-what they did, what you agreed and when you last spoke — that is the part
-that helps when you need someone who knows about tax law, or when a meeting
-starts in ten minutes. But nobody remembers which of 40 people notes and 300
-captures mention whom; so this reads them for you:
+(Windows: `py -3`.) It reads the person notes, captures and logs, so you
+need not remember which of them mention whom:
 
   who        ranks people by how much their own note and the lines that
              mention them say about the topic, nudged by how close they are,
              and prints the evidence — never a bare name.
-  close      "closeness" is computed from dated mentions: captures, project
-             logs, decisions, the person's own "Recent" lines. A mention
-             counts in full today and half after 90 days. It is a view, not
-             a verdict, and it is never written anywhere.
+  close      closeness from dated mentions (captures, project logs,
+             decisions, the person's own "Recent" lines): a mention counts
+             in full today and half after 90 days. A view, never written
+             anywhere.
   brief      the person's note boiled down for the minute before a meeting.
-  upcoming   dated lines in the top-level notes (Deadlines and the like) within the next days
-             that name a person — the review puts them on Home with a link.
-  contacts   breadth from the phone's address book (export as .vcf), without
-             importing it: who has no note yet, with organisation and title.
-             `--no-names` prints numbers instead of names, so a model can sort
-             people by field without seeing who they are; `--reveal` maps the
-             numbers back. The file stays where it is — keep it out of the vault.
+  upcoming   dated lines in the top-level notes (Deadlines and the like)
+             within the next days that name a person; the review puts them
+             on Home with a link.
+  contacts   who in the phone's address book (.vcf export) has no note yet,
+             with organisation and title, without importing it.
+             `--no-names` prints numbers instead of names, so a model can
+             sort people by field without seeing who they are; `--reveal`
+             maps the numbers back. Keep the file out of the vault.
 
-The rules that keep this from turning into surveillance: it reads only the
-vault and the file you hand it, sends nothing anywhere, stores no score, and
-says nothing a note does not say. What goes INTO a person note stays the
-review's rule: facts you could show them if they asked.
+It reads only the vault and the file you hand it, sends nothing anywhere,
+stores no score, and says nothing a note does not say. What goes INTO a
+person note stays the review's rule: facts you could show them if they
+asked. `contacts` and the LinkedIn export are refused unattended; the
+export is also refused inside the vault and in a company vault.
 
 People are the notes in the people folder (`30-…/people/`, or its name in
-the vault's language) and every note with `type: person` — and every entry
-of a group note written as `- **Full Name** – role` (a team, a committee, a
-client's staff): measured on a real brain, one such note held 15 people
-that a note-per-person reading turned into a single "person". A person is
-recognised by the note's name, its title and its `aliases:`, an entry by its
-full name, a nickname in quotes and, after a title (`Hr. Brandt`), its
-surname — whole words, umlauts folded like search.py. A first name alone
-counts only when one known person carries it AND the note also names that
-person's group subject (the group note's links and name): in 300 notes
-"Anna" is three different people, but "Ben" in a note about the shop is the
-Ben of the shop team. Python standard library only.
+the vault's language), every note with `type: person`, and every entry of
+a group note written as `- **Full Name** – role` (a team, a committee). A
+person is recognised by the note's name, its title and its `aliases:`; an
+entry by its full name, a nickname in quotes and, after a title
+(`Hr. Brandt`), its surname — whole words, umlauts folded like search.py.
+A first name alone counts only when one known person carries it AND the
+note also names that person's group subject (the group note's links and
+name): "Anna" may be three people, but "Ben" in a note about the shop is
+the Ben of the shop team. Python standard library only.
 """
 from __future__ import annotations
 
@@ -161,11 +158,10 @@ def clean(line, limit=150):
 
 
 # ------------------------------------------------------------------- people
-# A group note lists several people, one bold entry each — "- **Felix Daum** –
-# lawyer in Vienna". Measured on a real brain: one such note held 15 people,
-# and "who can I ask about a lawyer?" answered with the NOTE's name. Entries
-# are people; bold attributes ("**Birthday:**", "**Acme GmbH** (…):") are not —
-# hence the dash after the name, and no colon, digit or company form in it.
+# A group note lists several people, one bold entry each: "- **Felix Daum** –
+# lawyer in Vienna". Bold attributes ("**Birthday:**", "**Acme GmbH** (…):")
+# are not people, hence the dash after the name and no colon, digit or
+# company form in it.
 MEMBER = re.compile(r"^\s*[-*+]\s+\*\*(?P<name>[^*\n]{2,80}?)\*\*\s*(?:\([^)\n]{0,80}\)\s*)?[–—-]\s+\S")
 TITLES = {"hr.", "fr.", "herr", "frau", "dr.", "mag.", "prof.", "mr.", "mrs.", "ms.", "sr.", "sra."}
 ARTICLES = {"ein", "eine", "einer", "der", "die", "das", "a", "an", "the", "un", "une", "el", "la", "le",
@@ -302,8 +298,8 @@ def people():
             p.members = [Person(path, entry=e, group=p) for e in entries(p)]
             found[str(path)] = p
     persons = list(found.values())
-    # a group's subject is what it is ABOUT — a link to a person ([[Papa]]) is
-    # not: with it, every note naming that person made "Ben" the group's Ben
+    # a group's subject is what it is ABOUT; a link to a person ([[Papa]]) is
+    # not, or every note naming that person would make "Ben" the group's Ben
     person_names = {n for p in persons for n in p.names}
     for p in persons:
         p.context -= person_names
@@ -313,8 +309,7 @@ def people():
 class Directory:
     """Who a line names. Full names and aliases count everywhere; a first name
     counts only when exactly one known person carries it AND the note also
-    names that person's group subject — in 300 notes "Anna" is three people,
-    but "Ben" in a note about the licence project is the Ben of that project."""
+    names that person's group subject."""
 
     def __init__(self, persons):
         by_name = {}
@@ -444,11 +439,9 @@ def cmd_who(terms, k, contacts_file, linkedin=None, me=None):
         own_lines = [l for l in own if any(t in fold(l) for t in folded)]
         evidence = [(path, line) for _, path, line in p.mentions
                     if not (path == p.path and line in own_set) and any(t in fold(line) for t in folded)]
-        # what their own note says outweighs being mentioned near the topic: on a
-        # real brain, "lawyer" put two people above the lawyers because both were
-        # named in many lines about lawyers. Closeness only breaks near-ties
-        # (at most +50 %) — an additive bonus put the most-mentioned family
-        # member above the actual lawyer.
+        # Their own note outweighs being mentioned near the topic. Closeness
+        # only breaks near-ties (at most +50 %), so a much-mentioned relative
+        # does not outrank the actual lawyer.
         relevance = 10 * min(len(own_lines), 2) + min(len(evidence), 5)
         if relevance:
             ranked.append((relevance * (1 + min(closeness(p, today), 10) / 20), p, own_lines, evidence))
@@ -634,23 +627,17 @@ def cmd_contacts(path, no_names, reveal):
 
 # ----------------------------------------------------------------- LinkedIn
 # Your own data export (Settings → Data privacy → Download your data), read in
-# place — zip or folder, never extracted, nothing stored. What it is worth,
-# measured against the research rather than assumed:
+# place: zip or folder, never extracted, nothing stored.
 #   - From 20.12.2026 the connections file no longer carries company, title or
-#     email (LinkedIn's help page): sorting people by "where they work" — the
-#     usual LinkedIn import — stops working for every new export. Company and
-#     title are used only when an older export still has them, labelled with
-#     the export's date.
-#   - What stays and carries value is who you actually WROTE WITH, and when:
-#     a two-way message history is a tie, an inbound-only one is a recruiter.
-#     Message text and subjects are dropped as each row is read.
-#   - Ties silent for three years and more ("dormant") are about as useful
-#     as current close ones when reconnected, and for the novelty they bring
-#     (Levin, Walter & Murnighan 2011; Walter et al. 2015) — while people pick
-#     the wrong ones by habit. Hence `revive`, ranked by topic, not by how
-#     much you used to write.
-#   - What you vouched for — skills you endorsed, recommendations you wrote —
-#     is your own judgement, dated: expertise evidence that survives 20.12.
+#     email (LinkedIn's help page). Company and title are used only when an
+#     older export still has them, labelled with the export's date.
+#   - Who you actually WROTE WITH, and when: a two-way message history is a
+#     tie, an inbound-only one is a recruiter. Message text and subjects are
+#     dropped as each row is read.
+#   - Ties silent for three years and more are worth reviving (Levin, Walter
+#     & Murnighan 2011): `revive` ranks them by topic, not by past volume.
+#   - What you vouched for (skills endorsed, recommendations written) is your
+#     own dated judgement: expertise evidence that survives 20.12.2026.
 MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep",
                                       "oct", "nov", "dec"), 1)}
 DORMANT_YEARS = 3
@@ -896,10 +883,9 @@ def inside_vault(path):
 
 
 def linkedin_guard(path):
-    """The export is other people's data: it stays outside the vault (a vault
-    is versioned, and git never forgets), it is not for a company vault (there
-    the company is the controller and needs its own legal basis for an
-    employee's private network), and never for an unattended run."""
+    """The export is other people's data: never inside the vault (git never
+    forgets), never in a company vault (the company would need its own legal
+    basis for an employee's private network), never unattended."""
     if os.environ.get("BRAINWARDEN_UNATTENDED"):
         print("refused while unattended: LinkedIn only in a normal chat")
         return 2
@@ -971,10 +957,10 @@ def linkedin_who(li, persons, folded, k):
 
 
 def cmd_revive(terms, k, years, linkedin, me):
-    """Who to get back in touch with about this — quiet for years, and with a
-    reason in the brain or in what you vouched for. Ranked by the topic, never
-    by how much you used to write: people prefer the ties they used most,
-    which are the ones with the least news (Walter et al. 2015)."""
+    """Who to get back in touch with about this: quiet for years, with a
+    reason in the brain or in what you vouched for. Ranked by the topic,
+    never by how much you used to write (the most-used ties bring the least
+    news)."""
     if linkedin:
         refused = linkedin_guard(linkedin)
         if refused:

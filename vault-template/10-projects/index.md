@@ -5,7 +5,7 @@ trip, an exam.
 
 **Rules here:** one folder or one note per project, named after the
 project in kebab-case. A project note without a concrete next physical
-action is stalled — say so at the review instead of leaving it quietly.
+action is stalled — say so at the review.
 Every date here also belongs in [../Deadlines.md](../Deadlines.md), the
 single source of truth for dates. Finished or abandoned → move to
 [../90-archive/](../90-archive/index.md), drop it from the list below.

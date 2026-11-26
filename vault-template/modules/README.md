@@ -1,9 +1,9 @@
 # modules/ — mode overlays (kit only, NEVER part of a vault)
 
-The vault template has ONE core. Everything a `professional` or
-`company` vault needs on top lives here as an **overlay**: a folder tree
-shaped exactly like a vault root, so applying it is a plain copy — no
-guessing which file goes where.
+The vault template has ONE core. What a `professional` or `company`
+vault adds lives here as an **overlay**: a folder tree shaped exactly
+like a vault root, so applying it is a plain copy. `personal` gets no
+overlay.
 
 ```
 modules/
@@ -11,9 +11,8 @@ modules/
 └── company/     → company only               (60/70/80, suggestions/, overrides)
 ```
 
-This `README.md` is the only file here that must never reach a vault —
-it sits one level above the overlays, so copying `modules/<name>/.`
-cannot pick it up.
+This `README.md` must never reach a vault; it sits above the overlays,
+so copying `modules/<name>/.` cannot pick it up.
 
 ## Applying an overlay (for SETUP-FOR-CLAUDE.md)
 
@@ -21,79 +20,63 @@ cannot pick it up.
 python3 assemble.py ~/Brain <personal|professional|company>
 ```
 
-`assemble.py` (kit root) does the whole sequence: core, then the overlays
-the mode needs, leaving `modules/` behind, then removing the files a
-shared vault must not carry. It never overwrites and lists what it left
-alone. Keep the overlay folders shaped like a vault root — that is what
-makes applying them a plain copy, and the script relies on it. The list
-of files the company mode drops lives in `COMPANY_DROPS` at the top of
-that script; when an overlay gains a file that a shared vault must not
-have, that list is the one place to change.
+`assemble.py` (kit root) copies the core, then the mode's overlays in
+order, skips `modules/` and leaves out what a shared vault must not
+carry. It never overwrites a file that was already there (on the adopt
+path too: the vault's own `About this vault.md`, `Home.md` or filled-in
+`index.md` stay) and lists what it left alone.
 
-
-Order matters, and the script applies it: the company overlay deliberately OVERWRITES thirteen files — twelve
-from the core plus the processes overlay's `_templates/sop-note.md`. Nine of
-them talk about folders which do not exist in a company vault — six
-`index.md` (root, `00-inbox/`, `30-knowledge/`, `40-decisions/`,
-`90-archive/`, `_templates/`) plus `Home.md` (the core one links
-`[[About me]]`, which company mode deletes), `Deadlines.md` and
-`CLAUDE.md`. The other four are **note templates whose frontmatter is
-the wrong schema for a shared vault**: `_templates/knowledge-note.md`,
-`_templates/source-note.md`, `_templates/sop-note.md` and
-`40-decisions/_template.md`. The core versions carry `ownership: private`
-— a field the company schema does not define, whose value says the
-opposite of what a shared vault is — and none of them carries the four
-fields this mode requires on every note (`owner`, `audience`,
-`confidentiality`, `review_due`). Left in place, a note copied straight
-from the template lands in the vault and `hygiene.py` reports it under
-**frontmatter gaps**, which the setup's own Step-9 checklist demands be
-zero. Neither `hygiene.py` nor `progress.py` scans `_templates/`, so
-nothing in the kit would ever have pointed at the cause.
-
-That is all intended: every link in a signpost has to be a path that
-really exists and every template has to produce a note this mode
-accepts, otherwise the whole system lies. Apply the overlays with
-`assemble.py` on the adopt path too: it replaces a core file only where
-it copied that file a moment earlier, never one that was already there —
-their own `About this vault.md`, `Home.md` or filled-in `index.md`
-included.
-
-The company `Home.md` keeps the SAME four block markers as the core one
-(`block:right-now`, `block:next-deadlines`, `block:open-questions`,
-`block:new-this-week`) — the skills address those markers, so they must
-never be renamed per mode.
-
-`person-note.md` is deleted on purpose, not just left unlisted: a
-template for dossiers about people is a trap in a vault whose rule is
-"roles, not people".
-
-Overlays only ship a folder's `CLAUDE.md` when they CREATE that folder —
-where they merely override an `index.md`, the identical two-line
-`CLAUDE.md` is already there from step 1.
-
-`personal` gets no overlay at all.
+- Keep overlays shaped like a vault root; the script relies on it.
+- What company mode drops is listed in `COMPANY_DROPS` at the top of
+  `assemble.py`, the one place to change it. It includes
+  `person-note.md`: a vault whose rule is "roles, not people" gets no
+  dossier template.
+- An overlay ships a folder's `CLAUDE.md` only when it CREATES the
+  folder; where it only overrides an `index.md`, the two-line
+  `CLAUDE.md` is already there from the core.
+- The company `Home.md` keeps the SAME four block markers as the core
+  (`block:right-now`, `block:next-deadlines`, `block:open-questions`,
+  `block:new-this-week`). The skills address them; never rename them per
+  mode.
 
 ## What each overlay adds
 
 | Overlay | Adds |
 |---|---|
-| `processes/` | `50-processes/` and `60-contribution/` (each index + CLAUDE.md), `handover.md`, `_templates/sop-note.md` + `meeting-note.md` + `contribution-entry.md` + `learning-note.md`, and two overriding files: `_templates/index.md` (lists the SOP template) and the root `index.md` (without it the folder that defines this mode is missing from the cold-entry signpost) |
-| `company/` | `60-roles/`, `70-onboarding/` (incl. `onboarding-path.md`), `80-partners/`, `00-inbox/suggestions/`, `About this vault.md`, `THIS-COPY.md` (a distributed copy ages silently — this file carries its date), `.tools/progress.py` (how much of the vault is verified, not just how much text exists), `_templates/role-note.md` + `partner-note.md` + `onboarding-plan.md`, and thirteen overriding files (twelve from the core, `sop-note.md` from `processes/`): six `index.md` (root, `00-inbox`, `30-knowledge`, `40-decisions`, `90-archive`, `_templates`), `Home.md`, `Deadlines.md` (the core one lacks this mode's required fields), **`CLAUDE.md`** — the binding rules file; the core one describes projects, areas and person notes, none of which exist here, and leaving it in place is the one override whose absence makes an agent create a personnel dossier — and four note templates (`_templates/knowledge-note.md`, `source-note.md`, `sop-note.md`, `40-decisions/_template.md`) whose core versions produce notes that fail this mode's own frontmatter check. |
+| `processes/` | `50-processes/` and `60-contribution/` (each index + CLAUDE.md), `handover.md`, `_templates/sop-note.md` + `meeting-note.md` + `contribution-entry.md` + `learning-note.md`, and two overriding files: `_templates/index.md` (lists the SOP template) and the root `index.md` (names the folder that defines this mode) |
+| `company/` | `60-roles/`, `70-onboarding/` (incl. `onboarding-path.md`), `80-partners/`, `00-inbox/suggestions/`, `About this vault.md`, `THIS-COPY.md` (carries the date of a distributed copy), `.tools/progress.py` (how much of the vault is verified), `_templates/role-note.md` + `partner-note.md` + `onboarding-plan.md`, and the thirteen overriding files below |
+
+**The company overlay OVERWRITES thirteen files**, twelve from the core
+plus the processes overlay's `_templates/sop-note.md`:
+
+- **Nine refer to folders a company vault lacks:** six `index.md` (root,
+  `00-inbox/`, `30-knowledge/`, `40-decisions/`, `90-archive/`,
+  `_templates/`), `Home.md` (the core one links `[[About me]]`, which
+  company mode deletes), `Deadlines.md` and **`CLAUDE.md`**, the binding
+  rules file. The core one describes projects, areas and person notes;
+  left in place, it makes an agent create personnel dossiers.
+- **Four note templates** whose core versions fail this mode's
+  frontmatter check: `_templates/knowledge-note.md`,
+  `_templates/source-note.md`, `_templates/sop-note.md`,
+  `40-decisions/_template.md`. They carry `ownership: private` and lack
+  `owner`, `audience`, `confidentiality`, `review_due`, so every note
+  made from them would be a `hygiene.py` **frontmatter gap** (Step 9
+  demands zero). Neither `hygiene.py` nor `progress.py` scans
+  `_templates/`, so nothing would point at the cause.
 
 ## Placeholders the setup still has to fill
 - `{{MODE}}` and `{{LANGUAGE}}` in the vault `CLAUDE.md`
 - `{{MODE}}` and `{{LANGUAGE}}` in the root `index.md` (both variants)
 - `{{DATE}}` in `About this vault.md` and **four times in `THIS-COPY.md`**
   (the date of the copy, its `created:`, its first changelog line, and
-  `review_due:` — which gets today + 12 months, not today)
+  `review_due:`, which gets today + 12 months, not today)
 - `{{COMPANY}}` in `About this vault.md` and `70-onboarding/onboarding-path.md`
-- the `<…>` fields in `About this vault.md`, `Deadlines.md` and
-  `70-onboarding/onboarding-path.md` — nine of them, and `hygiene.py`
-  cannot see any of them, because `owner: <role that owns this vault>`
-  is a perfectly non-empty value. `progress.py` counts them; run it
-  before handing the vault over.
+- the nine `<…>` fields in `About this vault.md`, `Deadlines.md` and
+  `70-onboarding/onboarding-path.md`. `hygiene.py` cannot see them
+  (`owner: <role that owns this vault>` is a non-empty value);
+  `progress.py` counts them. Run it before handing the vault over.
 
 ## Adding another module later
-New folder here, shaped like a vault root, one line in the table above,
-and every content folder it introduces brings its own `index.md` +
-two-line `CLAUDE.md` — same rule as the core.
+Add a folder here shaped like a vault root and a row in the table above.
+Every content folder it introduces brings its own `index.md` and
+two-line `CLAUDE.md`, as in the core.

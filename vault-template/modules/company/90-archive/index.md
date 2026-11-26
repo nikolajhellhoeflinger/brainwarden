@@ -7,8 +7,7 @@ relationships — kept for the record.
 editing them. Everything here is HISTORY: quote it as "this is how it
 was", never as "this is how it is". Set `status: deprecated` when moving
 something in, and if a newer version exists append a plain-text
-`Superseded by [path]` line before the move — that pointer is the whole
-reason the old file may survive. Nothing is deleted here.
+`Superseded by [path]` line before the move. Nothing is deleted here.
 **NOT here:** anything still in force →
 [../50-processes/](../50-processes/index.md),
 [../60-roles/](../60-roles/index.md),

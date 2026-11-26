@@ -28,19 +28,15 @@ verified:
 In force.
 
 <!-- Company mode: `owner`, `audience`, `confidentiality` and `review_due`
-     are required like everywhere else, and `owner:` is the ROLE that made
-     the call — a record whose only owner is a person's name loses its
-     owner the day that person leaves. `status: stable` is correct from
-     the start (a decision either was made or it wasn't), but it only
-     becomes company truth once a human fills `verified:`. There is no
-     `ownership:` field in a shared vault.
+     are required. `owner:` is the ROLE that made the call (a person's
+     name loses its owner when they leave). `status: stable` is correct
+     from the start, but the record is company truth only once a human
+     fills `verified:`. No `ownership:` field in a shared vault.
 
      When this record is replaced, this section is REWRITTEN, not extended:
-     the line above is replaced by `Superseded by [<path>](<path>)`, and the
-     frontmatter gets `status: deprecated`. Two `## Status` sections, the
-     first still saying "In force", is the one failure this convention
-     exists to prevent — an agent greps the first hit and believes it.
-     The new record gets its own `## Status` with
+     the line above becomes `Superseded by [<path>](<path>)` and the
+     frontmatter gets `status: deprecated`. Never two `## Status`
+     sections — an agent greps the first and believes it. The new record
+     gets its own `## Status` with
      `Supersedes [40-decisions/<old-file>.md](<old-file>.md)`.
-     Rewriting THIS section is the single exception to append-only;
-     everything else in a decision record stays untouched forever. -->
+     Rewriting THIS section is the single exception to append-only. -->

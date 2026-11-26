@@ -1,8 +1,8 @@
 # 40-decisions
 
 One record per decision that was actually made — what was decided, why,
-and what was rejected. This is the folder that answers "why is it like
-this?" without asking the person who decided it.
+and what was rejected. It answers "why is it like this?" without asking
+whoever decided it.
 
 **Rules here:** append-only. A record is NEVER rewritten and never
 deleted: if it turns out wrong, write a new record and link both files

@@ -1,23 +1,11 @@
 #!/usr/bin/env python3
 """Brainwarden — project context (Claude Code "SessionStart" hook, opt-in).
 
-The gap this closes: the brain knows that the shop's checkout was decided
-against PayPal in March, that the launch is on the 14th and that one
-question is still open. A session started in the shop's code folder knows
-none of it, unless somebody remembers to ask. So decisions get re-made,
-dates get missed, and the brain is right but not there.
-
-What it does: when a session starts in a folder that belongs to one of the
-brain's projects, Claude gets a short brief — the project note, the newest
-decisions that mention the project, its next dates and open points — and the
-paths to read before changing direction. In every other folder it prints
-nothing at all.
-
-Why per project and not global: a hook that pours the brain into EVERY
-session leaks. Private notes end up in a client's repository session, the
-note list in a screen share, a thousand tokens in front of every one-line
-question. This one speaks only where the person has already said "this
-folder is that project", or where the folder carries the project's name.
+When a session starts in a folder that belongs to one of the brain's
+projects, Claude gets a short brief: the project note, the newest decisions
+that mention the project, its next dates and open points, and the paths to
+read before changing direction. In every other folder it prints nothing, so
+private notes never reach unrelated sessions.
 
 Which folder belongs to which project:
   1. Explicitly — the project note says so in its frontmatter:
@@ -32,13 +20,10 @@ Which folder belongs to which project:
 Inside a vault it stays silent (the vault's own CLAUDE.md is loaded there),
 on `resume` too (that session has the brief already).
 
-What it deliberately does not do: it writes nothing, calls no model, opens
-no network connection, reads no person notes. It reads the projects folder,
-the decisions folder and the vault's top-level notes (for dates), stops at
-a size cap, and on any error it prints nothing — a broken brain must never
-break the start of a session. What it prints is the person's own notes,
-handed over as material: the brief says so, and a session the person sits
-in asks before it acts.
+It writes nothing, calls no model, opens no network connection and reads
+no person notes. It reads the projects folder, the decisions folder and the
+vault's top-level notes (for dates), stops at a size cap, and prints
+nothing on any error. The brief is labelled as material, not instructions.
 
 Install (opt-in):
 
@@ -60,14 +45,14 @@ import re
 import sys
 import unicodedata
 
-MAX_CHARS = 2200         # the whole brief (~550 tokens); one that needs scrolling is not a brief
+MAX_CHARS = 2200         # the whole brief (~550 tokens)
 LINE = 150               # one line of it
 READ_BYTES = 65536       # per note: the head carries what the brief needs
 SHOW = 3                 # per list
 MIN_NAME = 4             # shorter names match too much text to count as a mention
 DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4})")
-# a record that says it was replaced — at the start of a line, as hygiene.py
-# reads it; a translated status scale ("überholt") is not `deprecated`
+# a record replaced by another, read at line start as hygiene.py does; a
+# translated status value ("überholt") is not `deprecated`, so this is needed
 SUPERSEDED = re.compile(r"^[ \t]*(?:[-*>][ \t]*)?\**[ \t]*(superseded by\b|ersetzt durch\b|remplacé par\b)",
                         re.I | re.M)
 MODE_LINE = re.compile(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b", re.M | re.I)
@@ -79,9 +64,8 @@ def config_dir():
 
 
 def vault_path():
-    """The `Brain vault:` line of the global rules — the line every brain-*
-    skill follows — read the way people actually write it: bold, in
-    backticks, with a remark after a dash."""
+    """The `Brain vault:` line of the global rules (the line every brain-*
+    skill follows). Accepts bold, backticks and a trailing remark."""
     try:
         with open(os.path.join(config_dir(), "CLAUDE.md"), encoding="utf-8-sig", errors="ignore") as fh:
             for line in fh:
@@ -158,10 +142,9 @@ def numbered(vault):
 
 
 def folders(vault):
-    """(projects, decisions), found the way the other tools find theirs: the
-    decisions folder by its number (40-), the projects folder by its name in
-    any language (projects, Projekte, proyectos, projets, progetti …) — older
-    layouts number it differently — and else by the kit's number, 10-."""
+    """(projects, decisions), found as the other tools find them: decisions
+    by number (40-); projects by name in any language (Projekte, proyectos,
+    progetti …), since older layouts number it differently, else by 10-."""
     names = numbered(vault)
     proj = next((n for n in names if re.search(r"pro[jy]|progett", n.lower())), None) \
         or next((n for n in names if n.startswith("10-")), None)
@@ -206,8 +189,8 @@ def in_some_vault(cwd, vault):
         return True
     here = cwd
     for _ in range(12):
-        # the same test capture_check.py makes: a kit mode VALUE, the kit's
-        # tools and an inbox — not any rules file that happens to say "Mode:"
+        # same test as capture_check.py: a kit mode value, the kit's tools
+        # and an inbox, not just any rules file that says "Mode:"
         text = read(os.path.join(here, "CLAUDE.md"))
         if text and MODE_LINE.search(text) and os.path.isfile(os.path.join(here, ".tools", "hygiene.py")) \
                 and any(n.startswith("00-") for n in numbered(here)):
@@ -313,9 +296,8 @@ def to_date(m):
 
 
 def coming_dates(vault, project_path, names, today):
-    """Dated lines ahead of today: from the top-level notes (Deadlines and
-    the like) when they mention the project, and from the project note
-    itself. Home is skipped: it mirrors Deadlines and would only repeat it."""
+    """Dated lines ahead of today from the project note and from top-level
+    notes that mention the project. Home is skipped: it mirrors Deadlines."""
     sources = [project_path]
     try:
         sources += [os.path.join(vault, f) for f in sorted(os.listdir(vault))
@@ -336,7 +318,7 @@ def coming_dates(vault, project_path, names, today):
             if not ahead:
                 continue
             text = clean(line.lstrip("-* "))
-            # a Deadlines line starts with its date — the brief prints it in front already
+            # drop a leading date; the brief already prints it in front
             text = re.sub(r"^\**" + re.escape(min(ahead).isoformat()) + r"\**\s*[·:–—-]?\s*", "", text) or text
             key = (min(ahead), text[:60])
             if key not in seen:

@@ -1,209 +1,153 @@
 # Hooks — optional, opt-in
 
-A brain only works if things actually land in it — and if it is there when
-the work happens. The five skills cover the moment you *decide* to capture
-or ask. These hooks cover the moments you *forget* to: two that make sure
-things land, one that brings back what a folder's project already decided.
+The five skills cover the moments you decide to capture or ask. These
+three Claude Code hooks cover the moments you forget:
 
-Nothing here is installed by the setup. You add a hook yourself, or you ask
-Claude to ("install the capture check from brainwarden's hooks folder").
-Removing one is deleting a file and one entry in `settings.json`.
+| Hook | Event | What it does |
+|---|---|---|
+| `capture_check.py` | `Stop` | asks Claude to capture when nothing has reached the vault for a while |
+| `session_queue.py` | `SessionEnd` | notes one line per finished session for the weekly review |
+| `project_context.py` | `SessionStart` | briefs a session in a project's code folder on what the brain knows |
+
+The setup installs none of them. Add one yourself, or ask Claude
+("install the capture check from brainwarden's hooks folder").
+
+**Install:**
+1. Copy the script to `<config>/hooks/`. `<config>` is `~/.claude`, or
+   whatever `CLAUDE_CONFIG_DIR` points at; a second brain uses its own
+   (e.g. `~/.claude-work`), so file, entry and path all go there.
+2. Add the entry from the script's header to `<config>/settings.json`.
+3. Where `~` is not expanded (Windows shells generally), write the path
+   out in full, and use the Python command that works there, e.g.
+   `py -3`. `TROUBLESHOOTING.md` has the Windows entry form.
+
+The hooks need only Python 3, which the vault's tools already require,
+and behave the same on macOS, Linux and Windows.
+
+**Uninstall:** delete the file and its `settings.json` entry. The state
+file named below may stay or go.
 
 ## `capture_check.py`
 
-**What it is for.** Capture is a habit, and habits lapse. You work two days
-straight, decisions get made, dates get mentioned — and none of it reaches
-the brain, because nobody said "capture:". This hook is the net under that.
+**What it does.** At the end of a turn it looks for a recently modified
+`.md` file in `00-inbox/` or `40-decisions/`. If it finds one, it stays
+silent. If not, it makes Claude check the five capture triggers once (a
+decision, a date, a milestone, a new person, a lesson learned the hard
+way) and capture what is worth keeping.
 
-**How it works.** At the end of a turn it walks `00-inbox/` and
-`40-decisions/` and compares modification times: has any `.md` file been
-written there recently? If yes, it stays silent. If no, it makes Claude
-check the five capture triggers once — a decision, a date, a milestone, a
-new person, a lesson learned the hard way — and capture what is worth
-keeping. It never writes into the vault itself. Which vault: the one the
-session runs IN (the folder, or one above it, that has an inbox, the
-kit's `.tools/` and a `CLAUDE.md` naming its mode — `personal`,
-`professional` or `company`; a code repository whose rules file merely
-says "Mode:" never counts); elsewhere the `Brain vault:` line in
-`<config>/CLAUDE.md` — read bold or in backticks too — and `~/Brain`
-when there is none.
+**Which vault.** The one the session runs IN: the folder, or one above
+it, that has an inbox, the kit's `.tools/` and a `CLAUDE.md` naming its
+mode (`personal`, `professional` or `company`). A code repository whose
+rules file merely says "Mode:" never counts. Elsewhere it uses the
+`Brain vault:` line in `<config>/CLAUDE.md` (bold or in backticks too),
+and `~/Brain` when there is none.
 
-**It gets quieter on its own.** A reminder on a fixed timer is a nagger, and
-naggers get switched off — so this one keeps score, and the score sets the
-interval:
+**It backs off by itself:**
 
 | what happened after it asked | what it does next |
 |---|---|
 | something landed in the vault | asks twice as often (floor: base ÷ 4) |
 | nothing landed | asks half as often (ceiling: base × 16) |
-| nothing, five times running | goes to sleep — stops asking entirely |
+| nothing, five times running | goes to sleep and stops asking |
 | asleep, and the vault starts filling again | wakes up at the base interval |
 
-With the default base of four hours that ladder runs from one hour to about
-two and a half days, and five empty answers in a row end it. You never have
-to switch it off; ignoring it *is* switching it off, and starting to capture
-again is switching it back on.
+With the default base of four hours, the interval runs from one hour to
+about two and a half days. Ignoring it switches it off; capturing again
+switches it back on.
 
-**What it can honestly measure — and what it cannot.** It cannot tell
-whether you answered, or what you said. All it compares is file timestamps:
-did a `.md` file appear in `00-inbox/` or `40-decisions/` after it asked?
-That proxy is wrong in two known directions, both of them the right kind of
-wrong: a capture you write by hand counts for it even though it did not
-cause it, and a turn you interrupt counts against it. The question it is
-scoring is not "was I obeyed" but "is this still worth the interruption".
+It measures only file timestamps, not whether or what you answered. A
+capture written by hand counts as a hit even though the hook did not
+cause it; an interrupted turn counts as a miss.
 
-The score is three numbers — when it last spoke, when it last asked, and the
-current level — in `<config>/state/brainwarden-capture-check`. No content,
-ever. `python3 <vault>/.tools/harvest.py --queue` prints it in plain
-language; deleting the file resets everything.
+**It never:**
+- calls a model or the network: the pre-filter walks two folders
+  comparing `mtime` and stops at the first recent file;
+- writes into the vault, reads your conversation, sends anything
+  anywhere, or decides what is worth keeping;
+- asks twice in a row;
+- speaks when it cannot write its state file (read-only config, a
+  directory in its place). It stays silent instead.
 
-**Why it is built this way.** Four constraints shaped it:
+**State:** `<config>/state/brainwarden-capture-check`, three numbers
+(when it last spoke, when it last asked, the current level) and no
+content. `python3 <vault>/.tools/harvest.py --queue` prints it in plain
+language. Deleting the file resets it.
 
-1. **No model call in the pre-filter.** It is a directory walk over two
-   folders comparing `mtime`, and it stops at the first recent file. No
-   cost, no network, no latency until it actually fires — which matters if
-   you use Claude Code all day.
-2. **It never writes by itself.** Systems that silently hoard everything
-   drown in their own junk — that is the documented failure mode of
-   "extract everything" memory tools, and the reason this kit reports every
-   filing instead of doing it quietly. The hook prompts a decision; it does
-   not make one.
-3. **It cannot nag.** One reminder per interval, never twice in a row, and
-   the interval grows every time the reminder produces nothing.
-4. **If it cannot remember, it says nothing.** When the state file cannot be
-   written (read-only config, a directory in its place) the hook stays
-   silent instead of asking. It used to abort with a traceback there — on
-   *every* turn, since nothing was ever recorded. A reminder that cannot
-   remember that it already spoke is not a net, it is a stutter.
-
-**What it does not do:** it does not read your conversation, does not send
-anything anywhere, and does not decide what is worth keeping. That judgement
-stays with the model in front of you, which has the actual context.
-
-**Install:** see the header of the script. Needs nothing but Python 3, which
-the vault's own tools already require — so the script behaves identically on
-macOS, Linux and Windows. The `~/.claude/...` in the install snippet is a
-shell convention, not part of the path: where it is not expanded (Windows
-shells generally do not), write the path out in full. A second brain uses
-its own configuration directory (`CLAUDE_CONFIG_DIR`, e.g.
-`~/.claude-work`): file, `settings.json` entry and path go there instead.
-
-**Tuning:** `BRAINWARDEN_CAPTURE_WINDOW` (minutes, default 240) sets the
-*base* interval that the ladder moves around. `BRAINWARDEN_CAPTURE_CHECK=off`
-silences it without uninstalling. If it asks more often than you want, the
-honest reading is that the base is too short for you — raise it, or simply
-answer "nothing worth keeping" and let it back off by itself.
-
-**Uninstall:** delete the file and the `settings.json` entry. One thing is
-left behind: the state file named above — three numbers, harmless, and yours
-to delete.
+**Tuning:**
+- `BRAINWARDEN_CAPTURE_WINDOW` (minutes, default 240) sets the base
+  interval the ladder moves around.
+- `BRAINWARDEN_CAPTURE_CHECK=off` silences it without uninstalling.
+- Asks too often? Raise the base, or answer "nothing worth keeping" and
+  let it back off.
 
 ## `session_queue.py`
 
-**What it is for.** The capture check fires when nothing has reached the
-brain for hours. The weekly sweep looks at changed files and git logs.
-Both are blind to the same person: someone who spends the week in an ERP,
-on the phone and in a warehouse leaves no files and no commits. Their week
-is invisible.
+**What it does.** When a session ends it appends one line to a queue:
+four tab-separated fields, e.g.
+`2026-08-11 17:04` · `lager` · `a1b2c3d4` · `clear` (when, project,
+session id, why it ended). The weekly review reads the queue and asks
+about sessions it has not seen: *what came out of this one?* That covers
+weeks spent in an ERP, on the phone or in a warehouse, which leave no
+files and no commits.
 
-This hook leaves a trace. When a session ends it appends one line to a
-queue file — when, which project, which session, why it ended. The weekly
-review reads it and asks about the sessions it has not seen: *what came out
-of this one?*
+**It never:**
+- records anything that was said, reads the transcript, or stores the
+  transcript's path (the session id is enough to find a session again);
+- calls a model. `SessionEnd` hooks share a 1.5-second budget (raised to
+  match a longer per-hook `timeout`, up to 60 seconds);
+- writes into the vault. Only the review turns a queue line into a note,
+  with a human present.
 
-**What it records:** four tab-separated fields, and that is the whole line —
-`2026-08-11 17:04` · `lager` · `a1b2c3d4` · `clear`. **What it does not
-record:** anything that was said. It does not read the transcript, and it no
-longer writes down where the transcript is either: that path sat in the file
-for a while, nothing ever read it, and a pointer to everything that was said
-is precisely what this hook promises not to keep. The session id is enough
-to find a session again.
-
-It also does not call a model — `SessionEnd` hooks share a 1.5-second budget
-(raised to match a longer per-hook `timeout`, up to 60 seconds), and
-anything that thinks does not fit. Measured on this queue: about 15 ms per
-session end, including Python's own start-up. It writes nothing into the
-vault; only the review turns a queue line into a note, with a human in the
-room.
-
-That restraint is the point. The reliable way to kill a personal knowledge
-system is to make it feel like surveillance — and a work vault that seems
-to report upwards gets bypassed, not filled.
-
-**It appends, it does not rewrite.** The queue is a rolling window of the
-last 500 lines, but trimming it means writing the whole file, and opening a
-file for writing empties it *before* the first byte goes back in. A hook
-killed in that window — at the 1.5-second mark, say — used to leave an empty
-queue behind: the whole history, not the last line. Now the normal path is a
-single append, and the rare trim is written beside the file and moved into
-place with `os.replace`, which either happens completely or not at all.
+**State:** `<config>/state/brainwarden-session-queue.tsv`, a rolling
+window of the last 500 lines. Each session end is a single append; the
+rare trim is written beside the file and moved into place with
+`os.replace`, so a hook killed mid-write cannot empty the queue.
 
 **Read it any time:** `python3 <vault>/.tools/harvest.py --queue`
-**Install:** see the header of the script. **Uninstall:** delete the file,
-the settings entry and the queue.
+**Uninstall:** delete the file, the settings entry and the queue.
 
 ## `project_context.py`
 
-**What it is for.** The brain knows that the shop's checkout was decided
-against PayPal, that the launch is on the 14th and that one question is
-still open. A session started in the shop's code folder knows none of it —
-unless somebody remembers to ask. So decisions get made twice, and the
-second time without the reasons. This hook is the brain turning up where
-the work is, without being asked.
+**What it does.** When a session starts in a folder that belongs to one
+of the brain's projects, Claude gets a brief of at most ~550 tokens: the
+project note and its first line, the open next steps, the three newest
+decisions that mention the project (superseded ones left out), the next
+three dates from the top-level notes, and the open questions from the
+project note and from Home, each with the path to read before changing
+direction.
 
-**How it works.** When a session starts (`SessionStart`), it looks at the
-folder: does it belong to one of the brain's projects? Only then does
-Claude get a brief of at most ~550 tokens — the project note and its first
-line, the open next steps, the three newest decisions that mention the
-project (superseded ones left out), the next three dates from the
-top-level notes, the open questions from the project note and from Home —
-each with the path to read before changing direction. Measured on a vault
-of 870 notes: 20–30 ms.
+**Which folder is which project:**
+- explicitly, by a line in the project note's frontmatter:
+  `folders: [~/code/shop, ~/code/shop-api]`;
+- or by name: the repository's folder is called like the note (or one
+  of its `aliases:`), ignoring case and spaces vs. hyphens. A suffix is
+  dropped one hyphen at a time, so `acme-shop-api` finds
+  `Acme-Shop.md`; never the reverse, so `~/code/acme` finds nothing.
 
-**Which folder is which project.** Explicitly, by a line in the project
-note's frontmatter — `folders: [~/code/shop, ~/code/shop-api]` — or by
-name: the repository's folder is called like the note (or one of its
-`aliases:`), ignoring case and spaces vs. hyphens. A suffix is dropped one
-hyphen at a time, so `acme-shop-api` finds `Acme-Shop.md`; never the other
-way round, so `~/code/acme` finds nothing. A short folder name would
-otherwise match half the brain.
+**It is silent** in every folder that is not a project, inside the vault
+(its own `CLAUDE.md` loads there), inside any other vault, on a resumed
+session and on any error. A hook that pours the brain into every session
+would leak private notes into client repositories and screen shares.
 
-**It is silent everywhere else** — in every folder that is not a project,
-inside the vault (its own `CLAUDE.md` is loaded there), inside any other
-vault, on a resumed session, and on any error. That is the point of the
-design: a hook that pours the brain into *every* session is a leak — private
-notes in a client's repository, the note list in a screen share, a thousand
-tokens in front of every one-line question.
+**It never** writes, calls a model, opens a connection or reads person
+notes. The brief is the person's own notes handed over as material, and
+says so in its first line.
 
-**What it does not do:** it writes nothing, calls no model, opens no
-connection and reads no person notes. What it prints is the person's own
-notes, handed over as material — the brief says so in its first line.
-
-**Install:** see the header of the script. **Uninstall:** delete the file
-and the settings entry.
+**State:** none. **Uninstall:** delete the file and the settings entry.
 
 ## What no hook can see
 
-The hooks live inside Claude Code. Claude in the browser, Claude Cowork and
-a phone have no hook mechanism at all (see `COWORK.md`), and the person this
-kit is hardest to fill for — the one whose week happens in an ERP window, a
-warehouse and three phone calls — may never open a terminal.
+Claude in the browser, Claude Cowork and a phone have no hooks (see
+`COWORK.md`), and some people never open a terminal. For their weeks the
+review asks the human, with cues, because free recall over seven days is
+weak and favours yesterday:
 
-There is no tool to build for them, and installing one anyway would be the
-old mistake: a mechanism that measures the people it can reach and calls the
-rest invisible. What works instead is the weekly review's last track, the
-human — provided the question carries the cues. "What were the three most
-important things this week?" is free recall over seven days, which is weak
-and biased towards yesterday. These three are not:
+- **day by day:** Monday through Sunday, one line each, instead of "the
+  week";
+- **by counterpart:** walk `30-knowledge/people/` (or `60-roles/`,
+  `80-partners/`) by name: "anything with them this week?";
+- **by open loop:** every date in `Deadlines.md` and every open question
+  on `Home.md`: "what happened with this one?"
 
-- **day by day** — Monday through Sunday, one line each, instead of "the week"
-- **by counterpart** — walk `30-knowledge/people/` (or `60-roles/`,
-  `80-partners/`) by name: "anything with them this week?" Phone work leaves
-  no files, but it leaves people.
-- **by open loop** — every date in `Deadlines.md` and every open question on
-  `Home.md`: "what happened with this one?"
-
-All three are built from what the vault already knows, so they cost nothing
-and work on a machine that has never seen a hook. `harvest.py --queue`
-prints them when no queue exists, so the review reads the right instruction
-in exactly the situation where the hook can never help.
+All three use what the vault already knows. `harvest.py --queue` prints
+them when no queue exists.

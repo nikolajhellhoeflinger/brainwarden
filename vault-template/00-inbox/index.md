@@ -19,8 +19,7 @@ or deleted, never "kept for later".
 * [raw/README.md](raw/README.md) - drop zone for PDFs, transcripts, articles → skill `brain-ingest`
 
 ## Files that are NOT captures
-The review files everything here except these. They are notices, and they
-stand exactly where everyone looks, on purpose:
+The review files everything here except these notices:
 * `!Review failed.md` / `!Review overdue.md` — the unattended weekly review
   (`.tools/autoreview.py`) could not finish, or has not run for too long.
   They disappear by themselves after the next successful run.
@@ -29,9 +28,8 @@ stand exactly where everyone looks, on purpose:
   by hand in a normal chat.
 
 <!--
-With content this folder is a flat pile of dated capture files and no
-more entry points than the two above — that is the intended end state.
-A growing pile means reviews are being skipped.
+With content: a flat pile of dated capture files, no more entry points
+than the two above. A growing pile means reviews are being skipped.
 -->
 
 <!-- generated: 2026-08-11 -->

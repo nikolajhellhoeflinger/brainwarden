@@ -1,38 +1,35 @@
 # Brain — personal knowledge vault
 
 One folder, two windows: an Obsidian vault AND a Claude Code working
-directory on the same Markdown files. Structure: PARA-inspired
-(deliberately flat) plus Zettelkasten principles for knowledge.
+directory on the same Markdown files. Structure: PARA-inspired, flat,
+plus Zettelkasten principles for knowledge.
 
 Kit version: 1.3.0 (brainwarden — updates read this line to know what
 they're upgrading from, and set it to the new version afterwards)
 
-**Vault language: {{LANGUAGE}}** — write all notes, titles and links in
-this language (set during setup). Folder names and kit page names may be
-translated with everything else: the tools find the inbox, the decisions
-folder and the archive by their NUMBER (`00-`, `40-`, `90-`) and a kit page
-by its `<!-- kit-page -->` marker, never by an English word. Only
-`CLAUDE.md`, `index.md` and `Home.md` keep their names — those three are
-loaded by name.
+**Vault language: {{LANGUAGE}}**. Write all notes, titles and links in
+this language. Folder and kit page names may be translated too: the
+tools find the inbox, decisions and archive by NUMBER (`00-`, `40-`,
+`90-`) and a kit page by its `<!-- kit-page -->` marker. Only
+`CLAUDE.md`, `index.md` and `Home.md` keep their names (loaded by name).
 
-**Vault mode: {{MODE}}** — one of `personal`, `professional`, `company`
-(set during setup). The mode decides which folders exist; `index.md` in
-this folder is the map of THIS vault.
+**Vault mode: {{MODE}}** (one of `personal`, `professional`,
+`company`; set during setup). The mode decides which folders exist;
+`index.md` in this folder is the map of THIS vault.
 
-## Navigation — read the signpost before you write
-Every folder carries an `index.md`: what belongs there, what does NOT,
-and the entry points. It is the canonical signpost for ANY agent (the
-tiny `CLAUDE.md` next to it only pulls the same file into Claude's
-context automatically).
+## Navigation: read the signpost before you write
+Every folder has an `index.md` (what belongs there, what does NOT, the
+entry points) as the signpost for ANY agent; the two-line `CLAUDE.md`
+beside it loads it for Claude.
 - Landed in a folder via search or glob? Read its `index.md` FIRST.
-- Created a note that others should start from? Add it to that
-  `index.md` under "Entry points" and bump its `generated:` marker.
+- Created a note others should start from? Add it to that `index.md`
+  under "Entry points" and bump its `generated:` marker.
 - Links inside an `index.md` are **real relative paths**, never
-  `[[wikilinks]]` — a wikilink carries no path and an agent cannot
-  resolve it. In normal notes `[[wikilinks]]` stay the rule (Obsidian).
-- An `index.md` never lists every file — only the ways in.
+  `[[wikilinks]]` (an agent cannot resolve a link without a path). In
+  normal notes `[[wikilinks]]` stay the rule.
+- An `index.md` lists only the ways in, never every file.
 
-## Folder map (flat on purpose — folder depth is not a feature)
+## Folder map (flat on purpose)
 | Folder | Contains | Rule of thumb |
 |---|---|---|
 | `00-inbox/` | Raw captures, one file per thought | zero after each review |
@@ -43,28 +40,21 @@ context automatically).
 | `50–80` | **Reserved for YOUR modules** (journal, media log, health, money …) | added on demand |
 | `90-archive/` | Finished items from 10/20 | cold storage |
 
-**Mode differences (the mode line above says which one applies):**
-`professional` adds `50-processes/` (your own runbooks — "how I do this",
-not the company's official process) and `60-contribution/` (what you did,
-with evidence). `company` adds
-`50-processes/`, `60-roles/`, `70-onboarding/`, `80-partners/` and
-`00-inbox/suggestions/`, and drops `10-projects/`, `20-areas/` and
-`30-knowledge/people/` — roles instead of dossiers about people. Each of
-those folders explains its own extra rules in its `index.md`.
+**Mode differences:** `professional` adds `50-processes/` (your own
+runbooks, not the company's official process) and `60-contribution/`
+(what you did, with evidence). `company` adds `50-processes/`,
+`60-roles/`, `70-onboarding/`, `80-partners/`, `00-inbox/suggestions/`
+and drops `10-projects/`, `20-areas/`, `30-knowledge/people/` (roles,
+not dossiers). Each folder's `index.md` states its own rules.
 
-**Why the number gaps?** They are deliberate expansion space: new
-top-level modules slot in as `50-journal/`, `60-media/` etc. without ever
-re-sorting the core. Ask Claude to add a module and it lands in a gap —
-the core six folders stay, and so do their NUMBERS — the words in front
-of them may be translated, the numbers are what the tools read. Which
-gaps are still free depends on the mode: in
-`personal` all of 50–80; in `professional` everything except 50 and 60
-(`50-processes/` and `60-contribution/` sit there); in `company` none — 50–80 are all taken,
-so user modules are not offered there.
+**Number gaps** take new modules (`50-journal/`, `60-media/` …). Free:
+`personal` 50–80 · `professional` 70–80 · `company` none (no user
+modules). The six core folders keep their numbers; the tools read the
+numbers, the words may be translated.
 
 **Core sorting principle:** file by ACTIONABILITY (which project/area
-needs this NOW?), never by topic taxonomy. Findability comes from
-`[[links]]`, tags and search — not from folder depth.
+needs this NOW?), never by topic. Findability comes from `[[links]]`,
+tags and search, not folder depth.
 
 ## Note schema (machine-readable)
 Required on every note OUTSIDE the inbox:
@@ -77,7 +67,7 @@ created: YYYY-MM-DD
 tags: [kebab-case, lowercase, few]
 ---
 ```
-Optional — add a field the moment it applies, never "just because":
+Optional. Add a field the moment it applies, never "just because":
 ```yaml
 maturity: seed | growing | evergreen   # knowledge notes: how worked out is it?
 status: draft | stable | deprecated    # does it still hold? (work brains: recommended)
@@ -93,235 +83,191 @@ verified: {by: human:<name>, at: YYYY-MM-DD}     # a human confirmed it
 generated: {by: <agent>/<model>, at: YYYY-MM-DD} # an AI produced it
 ```
 
-**The two scales above are this vault's authority.** `hygiene.py`,
-`search.py --stats` and `progress.py` read the `maturity:` and `status:`
-lines out of THIS file and compare notes against what they find here. So the
-words may be translated (`status: entwurf | gültig | überholt`) — but then
-they must be translated HERE too, and each scale must keep its order:
-`maturity` runs unfinished → worked out, `status` runs draft → released →
-retired. Translate the values in the notes and not in this file and every
-one of those checks quietly stops matching, which reads exactly like a vault
-with nothing wrong.
+**The two scales above are this vault's authority:** `hygiene.py`,
+`search.py --stats` and `progress.py` read the `maturity:` and
+`status:` lines from THIS file. Translate their values
+(`status: entwurf | gültig | überholt`) here AND in the notes, never
+only in the notes, and keep the order: `maturity` runs unfinished →
+worked out, `status` draft → released → retired. Otherwise the checks
+silently stop matching.
 
-**`maturity` vs `status` — two different questions.** `maturity` (knowledge
-notes) asks how worked out a note is: `seed` = a thin first capture ·
-`growing` = own words + a source · `evergreen` = meets the note anatomy
-below. `status` asks whether the content still holds: `draft` ·
-`stable` · `deprecated`. A note can be `evergreen` and `deprecated` at
-once — beautifully worked out, and no longer true. `maturity` marks
-maturity, NOT importance: it keeps thinness HONEST and hands the weekly
-review its deepening candidates, it is never a reason to reject or
-delete a thin note.
+**`maturity` vs `status`.** `maturity` (knowledge notes): how worked
+out? `seed` = thin first capture · `growing` = own words + a source ·
+`evergreen` = meets the note anatomy below. `status`: does it still
+hold? A note can be `evergreen` and `deprecated` at once. `maturity` is
+not importance: it flags deepening candidates for the review, never a
+reason to reject or delete a thin note. The old spelling
+`status: seed|growing|evergreen` is now `maturity:`; rename it.
 
-**`verified` vs `generated` — the most important distinction in this
-vault.** `verified` means a human being read this and said "yes, that is
-right". `generated` means a machine wrote it and nobody has checked it
-yet. Rule for Claude: never set `verified` yourself — that field belongs
-to the human. `generated:` marks notes whose CONTENT you produced —
-researched facts, a summary you wrote, a draft procedure. Filing what the
-human said, in their words, is not authorship: a capture you paraphrase
-into a note does NOT get `generated:`, or the marker would sit on
-everything and mean nothing. Old field name: what used to be
-`status: seed|growing|evergreen` is now `maturity:` — if you meet the
-old spelling in a note, rename it.
+**`verified` vs `generated`: the most important distinction here.**
+`verified` = a human read it and said "yes, that is right"; never set
+it yourself. `generated` = a machine wrote it and nobody has checked
+it: set it on notes whose CONTENT you produced (researched facts, your
+summary, a draft procedure). Filing the human's own words is not
+authorship: a paraphrased capture gets no `generated:`.
 
-**`ownership:` — the field a work brain cannot do without.** In
-`professional` mode every note carries `ownership: private | company |
-mixed` — the one field `hygiene.py` requires there (`status:` and
-`confidentiality:` are recommended). This is not bureaucracy, it is the only
-thing that makes the vault separable later. In Germany and Austria an
-employee must hand over everything obtained from the employment when they
-leave — and courts have held that this includes **notes the employee wrote
-themselves** about customer conversations and project work, with only
-genuinely private records exempt, and that copies must be deleted too
-(§ 667 BGB analog; BAG 14.12.2011 – 10 AZR 283/10). Draw that line on the
-day a note is written and leaving takes minutes. Draw it on the last day
-and it cannot be drawn at all.
+**`ownership:` (work brains).** In `professional` mode every note
+carries `ownership: private | company | mixed`, the one field
+`hygiene.py` requires there. Set it the day the note is written: in
+Germany and Austria a leaving employee must hand over everything
+obtained from the job, own notes included, and delete copies (§ 667 BGB
+analog; BAG 14.12.2011 – 10 AZR 283/10). **Nothing stays `mixed` for
+more than a week**; the review splits or reclassifies it.
 
-A third field follows from it: `ai_release: local | external_ok`. Be precise
-about what it can and cannot do, because it is easy to believe more of it
-than is true: **by the time an agent reads this line, the note is already in
-its context.** The field cannot stop that and does not pretend to.
+**`ai_release:`** cannot keep a note out of your context (you have read
+it); it governs what may LEAVE the conversation. Keep a `local` note out
+of summaries sent outside, email drafts, tickets, support requests, web
+search queries and shared files, and say that you did. Content that
+must never reach a model needs a separate vault (as for
+`confidentiality:`).
 
-What it governs is the step AFTER reading: whether this content may leave
-the conversation. `local` means it must not end up in a summary sent
-outside, an email draft, a ticket, a support request, a web search query or
-a file put somewhere shared — the places where company AI policies
-typically draw the line (contracts, customer data, financial figures,
-source code). An agent honours it by keeping such a note out of anything it
-produces for the outside, and by saying so instead of quietly complying.
+**Notes about colleagues are facts only:** role, responsibility, how to
+reach them, current work, what was agreed. Never character judgements,
+performance assessments or guesses about motives. Test: *could I show
+this to that person if they asked?* They can: such notes fall under a
+subject access request, and the GDPR household exemption does not cover
+notes with a professional purpose (Art. 2(2)(c), recital 18; CJEU
+Lindqvist C-101/01, Ryneš C-212/13).
 
-If content genuinely must never reach a model at all, no field achieves
-that. That is what a second, separate vault is for — the same answer as for
-`confidentiality:`. Rule for the weekly review: **nothing stays `mixed` for more than a
-week** — split it or reclassify it.
+**Superseding: write it on BOTH files, as plain text,** so an agent
+landing in the OLD file finds the pointer.
+- New file: a `## Status` section with
+  `Supersedes [40-decisions/2026-05-10-old.md](40-decisions/2026-05-10-old.md)`.
+- Old file: its `## Status` body is REPLACED by
+  `Superseded by [<path>](<path>)` (append the section if it has none),
+  and its frontmatter gets `status: deprecated`. Never leave an "in
+  force" line above it: an agent greps the first `## Status` and
+  believes it. Nothing else in the old record changes; this is the
+  only exception to append-only.
+- Real relative paths. **Use the English keywords even in a translated
+  vault:** `Ersetzt durch` / `remplacé par` are recognised only at the
+  start of a line.
 
-**Notes about colleagues are facts only.** Role, responsibility, how to
-reach them, what they are working on, what was agreed. Never character
-judgements, performance assessments or guesses about motives. The test
-before writing a line: *could I show this to that person if they asked?*
-They can: informal management notes about a named person's conduct or
-performance fall under a subject access request, and the GDPR's household
-exemption does not cover notes with a professional purpose (Art. 2(2)(c),
-recital 18; CJEU Lindqvist C-101/01, Ryneš C-212/13).
-
-**Superseding — write it on BOTH files, as plain text.** When a note
-replaces another, an agent that searches its way into the OLD file must
-find the pointer there, otherwise two plausible versions compete. New
-file gets a `## Status` section with
-`Supersedes [40-decisions/2026-05-10-old.md](40-decisions/2026-05-10-old.md)`,
-old file: its `## Status` body is REPLACED by
-  `Superseded by [<path>](<path>)` (append the section if it has none), and
-  its frontmatter gets `status: deprecated`. Never leave an "in force" line
-  standing above a supersede notice — an agent greps the first `## Status`
-  and believes it. Nothing else in the old record changes; this one section
-  is the only exception to append-only. Real relative paths, rest of the
-  old file untouched. **Write both keywords in English even in a translated
-  vault.** A translated form (`Ersetzt durch`, `remplacé par`) is still
-  recognised, but only at the START of a line, and only there — `ersetzt` is
-  an ordinary German verb, so a tool matching it in running prose would call
-  "this folder replaces no system" a broken chain. The English keyword has
-  no such twin and is safe anywhere.
-
-- Inbox captures need NO frontmatter (zero friction) — added at review time.
+- Inbox captures need NO frontmatter (zero friction); it is added at
+  review time.
 - File names: descriptive, kebab-case; date-prefixed only for episodic notes.
 
 ## Thinking rules
 - **Atomic:** one idea per note; one person = one note (`30-knowledge/people/`).
-- **Own words:** processing means paraphrasing — copying is collecting,
+- **Own words:** processing means paraphrasing. Copying is collecting,
   not understanding.
-- **Processing duty:** the inbox goes to ZERO at every weekly review —
-  file it or delete it, never "later".
-- **Success metric is output** (texts, decisions, plans) — never note count.
+- **Processing duty:** the inbox goes to ZERO at every weekly review.
+  File it or delete it, never "later".
+- **Success metric is output** (texts, decisions, plans), never note count.
 - **Link rule:** add `[[links]]` only when note A truly changes how you
   read note B.
 - Maps of content only after ~150 notes; no new top-level folders without
   a deliberate decision.
 
-## Note anatomy (target depth per type — "atomic" means ONE idea, not few words)
+## Note anatomy (target depth per type; atomic = ONE idea, not few words)
 - **Knowledge note** (`30-knowledge/`, target `evergreen`): the idea in
   your own words → the evidence (`source:` + where in it) → one concrete
-  case, number or example → a limit or counter-position where one exists →
-  the `[[links]]`. Aim ~100–400 words. `seed` is allowed — `maturity`
-  just keeps the thinness honest and flags it for a later review.
-  `maturity: evergreen` is only earned once all of this is actually there.
-- **Person note** (`30-knowledge/people/`, `personal`/`professional` only):
-  a dossier, not an index card — role/relationship, verified facts,
-  recent interactions, open questions.
+  case, number or example → a limit or counter-position where one exists
+  → the `[[links]]`. Aim ~100–400 words. `seed` is allowed;
+  `maturity: evergreen` is earned only once all of this is there.
+- **Person note** (`30-knowledge/people/`, `personal`/`professional`
+  only): a dossier, not an index card. Role/relationship, verified
+  facts, recent interactions, open questions.
 - **Project note** (`10-projects/`): state + the next physical action + a
   short running log; grows by at least a line every time it comes up.
-- **Area note** (`20-areas/`): the standard you hold + current state + what
-  you're watching.
-- **Decision** (`40-decisions/`): deliberately terse and append-only —
-  brevity is correct here.
+- **Area note** (`20-areas/`): the standard you hold + current state +
+  what you're watching.
+- **Decision** (`40-decisions/`): terse and append-only, never
+  rewritten.
 - **MOC** (only past ~150 notes): a map with 2–3 sentences of framing per
   strand, never a bare list of links.
 - **SOP / role / partner note** (company + professional modes): shape and
   required fields live in the `index.md` of `50-processes/`, `60-roles/`
   and `80-partners/`.
 - **Principle:** depth comes from revision rounds (the review), not the
-  first draft — captures may be thin, `maturity` keeps that honest.
+  first draft.
 
-## The red line — Claude gardens, it does not author
-The notes are the human's thinking in the human's words. Claude tends the
-garden; it never replaces the plants.
+## The red line: Claude gardens, it does not author
+The notes are the human's thinking in the human's words.
 - Add researched facts only WITH a source and only marked as research
   (`source:` or an inline "(researched YYYY-MM-DD)").
 - Never rewrite or "improve" the human's own opinions, reflections or
-  phrasing — ask a question and work their answer in; don't overwrite
-  their voice.
-- Suggest interpretive summaries and links; don't silently manufacture
-  them. A vault full of AI paste becomes an attic — a vault in their
-  words stays theirs.
+  phrasing. Ask a question and work their answer in.
+- Suggest interpretive summaries and links; never silently manufacture
+  them.
 
 ## Instructions for Claude
-- Retrieval: ALWAYS run `python3 .tools/search.py <terms>` from the
-  vault root (this folder) first — saves context; then read only the
-  hits, never the whole vault. (`--stats` prints the vault's honest
-  numbers: note counts, maturity distribution, review history.)
-- `Home.md` is the living dashboard for the HUMAN — the review refreshes
-  all four blocks; deadline captures update "Next deadlines" right away.
-  Address the blocks by their `<!-- block:… -->` markers, never by the
-  heading text (headings get translated, markers do not), and replace
-  only what sits between a marker pair. `index.md` is the equivalent for
-  agents — Home is prose, `index.md` is paths.
+- Retrieval: ALWAYS run `python3 .tools/search.py <terms>` from this
+  folder first, then read only the hits, never the whole vault
+  (`--stats`: note counts, maturity distribution, review history).
+  Search before creating a note too: extend instead of duplicating.
+- `Home.md` is the HUMAN's dashboard: the review refreshes its four
+  blocks, a deadline capture updates "Next deadlines" at once. Address a
+  block by its `<!-- block:… -->` marker, never by heading text, and
+  replace only what sits between a marker pair. `index.md` is the
+  agents' equivalent: Home is prose, `index.md` is paths.
 - Incoming sources: files in `00-inbox/raw/` → skill `brain-ingest`.
-- Template per note type: knowledge → `_templates/knowledge-note.md` ·
-  source → `source-note.md` · person → `person-note.md` · project →
-  `project-note.md` · area → `area-note.md` · journal → `journal-entry.md`
-  · SOP → `sop-note.md` · meeting → `meeting-note.md` · learning →
-  `learning-note.md` · contribution → `contribution-entry.md` · role →
-  `role-note.md` · partner → `partner-note.md` (each only exists in the
-  modes that have the matching folder) · decision →
-  `40-decisions/_template.md`.
-  **Where meeting and learning notes go:** a meeting note is filed with
-  what it is ABOUT — the project in `10-projects/`, or `40-decisions/` if
-  its only lasting content is one decision (then keep it terse and drop
-  the raw notes). A learning note goes to `30-knowledge/`. Neither gets
-  its own folder: one meeting is an event, not a category. When instantiating, fill the
-  DATE/NAME placeholders with real values; the template files themselves
-  keep their placeholder tokens forever (their prose may be translated —
-  the tokens stay).
-  Never rewrite a decision record — append.
-- Inside `30-knowledge/` at most ONE level of subfolders (like `people/`);
-  everywhere else, no new subfolder without a reason.
-- Before creating a people/knowledge note, search first — extend instead
-  of duplicating.
-- Review hygiene: `python3 .tools/hygiene.py` reports orphan notes, dead
-  links, near-empty notes, notes no signpost reaches, folders without an
-  `index.md`, frontmatter gaps, expired `stale_after`/`review_due` dates,
-  one-sided supersede chains, unclosed code fences and portability
-  problems (encodings, file names another system cannot hold).
-  If another program writes into this vault (an assistant's memory store, a
-  plugin's daily notes, an export), list those folders in `.hygieneignore`
-  in the vault root, one per line — they follow their own conventions and
-  will never match this schema. The report names what it skipped, so the
-  exemption stays visible. Everything else stays in: a report that is
-  permanently red gets ignored, and then the real findings go unread.
-- Findability: `python3 .tools/exam.py` runs the vault's saved questions through
-  `search.py` and says how many still find their note in the top three
-  (`--record` keeps the score; `add` saves a new question). A miss means a
-  note lacks the words people search for — fix the note, not the exam.
-- People: `python3 .tools/people.py who <topic>` (who can help, with evidence) ·
-  `brief <name>` (before a meeting) · `close` (dated mentions, recent ones count
-  most) · `upcoming` (dates naming a person) · `contacts <file.vcf>` (address
-  book, read-only) · `revive <topic>` (quiet for years, linked to the topic) ·
-  `linkedin <export.zip>` and `--linkedin` (who you actually wrote with, what you
-  vouched for — never message text; the export stays outside the vault). It
-  stores nothing about anyone; the person-note rule stands.
-- Voice memos: `python3 .tools/transcribe.py` turns audio files in the inbox into
-  captures, locally. It needs ffmpeg (every recording is converted to WAV
-  first; `--check` names the speech engine and says if ffmpeg is missing;
-  `--auto on` lets the runner's tick do it). The recording moves to
-  `90-archive/voice/` and stays embedded in the note — listen before
-  trusting an odd name or number.
-- Unattended weekly review (only if the person asked for it):
-  `python3 .tools/autoreview.py install`, then `status` · `run --now` ·
-  `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,
-  `!Review overdue.md`, `Set aside.md`) are not captures — never file them.
-- Cold start from past sessions: `python3 .tools/harvest.py` (inventory
-  only) and `--candidates` (deterministic pre-filter); from the Claude app's
-  data export `--claude-export <zip>` (titles and dates only; `--show <id>`
-  prints one conversation's own messages); from a calendar `--ics <file>`
-  (upcoming dates in the Deadlines format, to confirm before filing). It
-  never writes and never calls a model — see Step 8a of the setup runbook
-  for the procedure and the consent rules.
-- Finished project / ended area → move to `90-archive/`, and remove it
-  from the source folder's `index.md` entry points.
-- The structure may EVOLVE: if reviews show a folder or area no longer
-  fits the person's life, propose the change — the onboarding interview was a
-  starting point, not a life sentence.
+- Templates in `_templates/` (each only in the modes that have its
+  folder): `knowledge-note.md` · `source-note.md` · `person-note.md` ·
+  `project-note.md` · `area-note.md` · `journal-entry.md` ·
+  `sop-note.md` · `meeting-note.md` · `learning-note.md` ·
+  `contribution-entry.md` · `role-note.md` · `partner-note.md`;
+  decision → `40-decisions/_template.md`. Fill the DATE/NAME
+  placeholders with real values; the template files keep their tokens
+  forever (their prose may be translated).
+- A meeting note is filed with what it is ABOUT: its project in
+  `10-projects/`, or `40-decisions/` if one decision is all that lasts
+  (then terse, raw notes dropped). A learning note goes to
+  `30-knowledge/`. Neither gets a folder of its own.
+- Inside `30-knowledge/` at most ONE level of subfolders (like
+  `people/`); elsewhere no new subfolder without a reason.
+- Finished project / ended area → `90-archive/`, and remove it from the
+  source folder's `index.md` entry points.
+- The structure may EVOLVE: when reviews show a folder or area no
+  longer fits the person's life, propose the change.
+
+### Tools (run from the vault root)
+- `python3 .tools/hygiene.py`: orphans, dead links, near-empty notes,
+  notes no signpost reaches, folders without `index.md`, frontmatter
+  gaps, expired `stale_after`/`review_due`, one-sided supersede chains,
+  unclosed code fences, portability problems (encodings, file names
+  another system cannot hold). Folders another program writes into (an
+  assistant's memory, a plugin's daily notes, an export) go into
+  `.hygieneignore` in the vault root, one per line; exempt nothing else.
+- `python3 .tools/exam.py`: how many saved questions still find their
+  note in the top three of `search.py` (`--record` keeps the score,
+  `add` saves a question). A miss is fixed in the note (it lacks the
+  words people search for), never in the exam.
+- `python3 .tools/people.py`: `who <topic>` (who can help, with
+  evidence) · `brief <name>` (before a meeting) · `close` (dated
+  mentions, recent ones weigh most) · `upcoming` (dates naming a
+  person) · `contacts <file.vcf>` (read-only) · `revive <topic>` (quiet
+  for years) · `linkedin <export.zip>` / `--linkedin` (who you wrote
+  with, what you vouched for; never message text, the export stays
+  outside the vault). It stores nothing; the person-note rule stands.
+- `python3 .tools/transcribe.py`: audio in the inbox → captures,
+  locally. Needs ffmpeg (`--check` names the speech engine and reports
+  a missing ffmpeg; `--auto on` hands it to the runner's tick). The
+  recording moves to `90-archive/voice/` and stays embedded in the note;
+  listen before trusting an odd name or number.
+- `python3 .tools/autoreview.py install`: unattended weekly review,
+  only if the person asked for it; then `status` · `run --now` · `undo`
+  · `uninstall`. Its inbox notices (`!Review failed.md`,
+  `!Review overdue.md`, `Set aside.md`) are not captures; never file
+  them.
+- `python3 .tools/harvest.py`: cold start from past sessions:
+  inventory only; `--candidates` (deterministic pre-filter);
+  `--claude-export <zip>` (titles and dates only; `--show <id>` prints
+  one conversation's own messages); `--ics <file>` (upcoming dates in
+  the Deadlines format, to confirm before filing). Never writes, never
+  calls a model; procedure and consent rules in Step 8a of the setup
+  runbook.
 
 ## Sync
 - Versioning: local Git. Do NOT put the vault in iCloud/Dropbox sync
   folders (corruption risk with Git). Phone: Obsidian Sync.
 
 ## Commands
-- **brain-capture** — frictionless thought → inbox (from any session)
-- **brain-ingest** — source from raw/ → triaged notes (light for
+- **brain-capture**: frictionless thought → inbox (from any session)
+- **brain-ingest**: source from raw/ → triaged notes (light for
   reference material, atomic for build material)
-- **brain-ask** — answer questions from the vault, with cited notes
-- **brain-review** — weekly: inbox to zero, contradiction check,
+- **brain-ask**: answer questions from the vault, with cited notes
+- **brain-review**: weekly inbox to zero, contradiction check,
   connections, hygiene, refresh Home, git commit
-- **brain-research** — fill open questions and thin notes with verified,
+- **brain-research**: fill open questions and thin notes with verified,
   sourced facts

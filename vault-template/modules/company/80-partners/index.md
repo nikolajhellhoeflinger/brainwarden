@@ -5,7 +5,7 @@ agencies, service providers, tools with a contract behind them.
 
 **Rules here:** `type: partner`. Four things per note — what they
 deliver, how we reach them, WHERE the conditions are written down (the
-contract path, not the numbers copied out: a stale copy is worse than a
+contract path, not copied numbers: a stale copy is worse than a
 pointer), and our experiences as dated facts. Experiences describe the
 COMPANY's delivery ("2026-03-04 delivery three weeks late, no notice"),
 never a named contact person's character — personal assessments of

@@ -1,162 +1,112 @@
-# Tutorial: from zero to a running brain (≈ 20 minutes + optional interview)
+# Tutorial: from zero to a running brain
 
-For people who have **never used Obsidian or Claude Code**. Every stage
-ends with a checkpoint ("how you know it worked").
-
----
+About 20 minutes plus an optional interview, for people new to Obsidian
+and Claude Code. Each stage ends with a checkpoint.
 
 ## Stage 1 — Install the tools (10 min)
 
-**Obsidian** (your window into the brain):
-1. [obsidian.md](https://obsidian.md) → download → install → open.
-2. Don't configure anything yet — just leave it open.
-
-**Claude Code** (the engine):
-1. You need a Claude subscription with Claude Code access → [claude.com](https://claude.com).
-2. Open a terminal (Mac: `Cmd+Space` → "Terminal" · Windows: Start →
-   "PowerShell" · Linux: any shell) and install — current guide:
+1. **Obsidian:** [obsidian.md](https://obsidian.md) → download →
+   install → open. Configure nothing yet.
+2. **Claude Code** needs a Claude subscription with Claude Code access
+   ([claude.com](https://claude.com)). Open a terminal (Mac: `Cmd+Space`
+   → "Terminal" · Windows: Start → "PowerShell" · Linux: any shell) and
+   install it as described at
    [claude.com/claude-code](https://claude.com/claude-code).
+   **On Windows**, first install
+   [Git for Windows](https://git-scm.com/downloads/win) with default
+   settings; the setup needs it. Problems: see the Windows section of
+   [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+3. Type `claude` and sign in.
 
-   **On Windows:** one extra install first —
-   [Git for Windows](https://git-scm.com/downloads/win), default
-   settings, just click through. You don't need to know what it is;
-   it's the piece that lets Claude run the setup for you. If anything
-   acts up later, the Windows section in
-   [TROUBLESHOOTING.md](TROUBLESHOOTING.md) has the fixes.
-3. Type `claude`, sign in with your account.
+Prefer no terminal? Claude Code also ships as a desktop app for Mac and
+Windows, and every step below works the same there. In an editor, use
+the [Claude Code extension for VS Code](https://code.claude.com/docs/en/vs-code).
 
-*(Would rather never touch a terminal? **Claude Code also ships as a normal
-desktop app for Mac and Windows** — install it like any other program, open
-it, type into it. No black screen anywhere, and every later step works the
-same. That is the simplest route and the one to take if the terminal is not
-your world. Developers who live in an editor can instead use the
-[Claude Code extension for VS Code](https://code.claude.com/docs/en/vs-code).)*
-
-✅ **Checkpoint:** Claude greets you with a prompt — in the terminal, in the
-desktop app, or in the editor panel, whichever you chose.
-
----
+**Checkpoint:** Claude greets you with a prompt.
 
 ## Stage 2 — Start the setup (5–10 min, ends with your first win)
 
-You don't need to download anything — **Claude does that too.** Open the
-terminal, type `claude`, then say literally:
+Claude downloads the kit itself. Start `claude` and say:
 
 > Set up the second brain from this GitHub repo for me:
 > https://github.com/nikolajhellhoeflinger/brainwarden — clone it and
 > follow SETUP-FOR-CLAUDE.md step by step.
 
-Claude fetches the kit and checks your prerequisites. Then comes the one
-question that shapes everything: **is this brain for you, for your work,
-for both kept apart, or for a company?** Unsure? Say "for me". A work
-brain can be added later, and nothing you build now is wasted.
+(Or clone the repo yourself, `cd` into it, start `claude` and say: "Read
+SETUP-FOR-CLAUDE.md and set up my brain accordingly.")
 
-After that, four short questions: your situation, the first thing the
-brain should help with, the language your notes live in (German works
-fine), and the next date you must not miss. From those answers Claude
-builds your first real notes: your areas, your first project, your
-deadlines, and a `Home` page that shows it all. A company brain starts
-differently, with one procedure written down and the role that owns it.
+Claude first asks: **is this brain for you, for your work, for both kept
+apart, or for a company?** Unsure? Say "for me"; a work brain can be
+added later. Then four short questions: your situation, the first thing
+the brain should help with, your notes' language (German works fine)
+and the next date you must not miss. From the answers Claude writes your
+areas, a first project, deadlines and a `Home` page (company: one
+procedure and the role that owns it).
 
-*(Advanced alternative: clone the repo yourself, `cd` into it, start
-`claude` and say: "Read SETUP-FOR-CLAUDE.md and set up my brain
-accordingly.")*
+**Checkpoint:** `ls ~/Brain` (or the path Claude named; PowerShell:
+`dir ~\Brain`) shows numbered folders from `00-inbox` to `90-archive`,
+depending on your answer, plus `_templates` with the note blueprints.
+The `index.md` and two-line `CLAUDE.md` in each folder are Claude's
+signposts; you can ignore them. Claude confirms your first project
+(company: first procedure) is in place. If "capture:" is not recognized,
+restart Claude Code once so the new skills load.
 
-✅ **Checkpoint:** `ls ~/Brain` (or whichever path Claude named — on
-Windows in PowerShell: `dir ~\Brain`) shows
-numbered folders from `00-inbox` to `90-archive` — exactly which ones
-depends on your answer above — plus a `_templates` folder, where the note
-blueprints live. Every folder that holds notes also carries an `index.md`
-and a two-line `CLAUDE.md`: the signposts Claude navigates by, safe for
-you to ignore. And Claude tells you your first project (in a company
-brain, your first procedure) is already in there. (If "capture:" isn't
-recognized right away, restart Claude Code once — fresh skills load with
-a new session.)
-
-*(Chose "both, kept separate"? Then you get two vaults and two commands:
-`claude` opens the private brain, `workbrain` the work one. Claude builds
-the private one first, completely, before starting the second.)*
-
----
+With "both, kept separate", `claude` opens the private brain and
+`workbrain` the work one; Claude builds the private one first.
 
 ## Stage 3 — See it in Obsidian (2 min)
 
-Obsidian → **"Open folder as vault"** → pick your vault folder (`~/Brain`
-unless you chose another path; a work brain defaults to `~/Brain-work`) →
-click **Home**.
+Obsidian → **"Open folder as vault"** → your vault folder (`~/Brain` by
+default, `~/Brain-work` for a work brain) → **Home**.
 
-This is the moment: your dashboard already shows *your* project, *your*
-deadlines — a brain that's alive before you wrote a single note yourself.
-
-✅ **Checkpoint:** `Home` names your first project under "Right now" (in a
-company brain, your first procedure) and you can click through to
+**Checkpoint:** `Home` names your first project under "Right now"
+(company: your first procedure), and you can click through to
 [[Deadlines]].
 
----
+## Stage 4 — The onboarding interview (10–15 min, optional)
 
-## Stage 4 — The onboarding interview (10–15 min, optional but worth it)
+Claude offers it at the end of setup, now or later. It teaches the brain
+your people, goals and working style. Talk freely, skip anything, and
+say "private" for what should stay out. A work brain skips the private
+questions; a company brain asks about processes, roles and terms
+instead.
 
-Claude offers this at the end of the setup — **your call, now or later.**
-It's what turns a running brain into one that really *knows* you: your
-people, your goals, your working style. Just talk — voice dumps welcome,
-skipping allowed. Anything that shouldn't go in: just say "private". In a
-work brain the private half is skipped by design; in a company brain the
-interview is about the company's processes, roles and terms instead of
-about you.
-
-✅ **Checkpoint:** Obsidian shows "About me" and individual people notes
-under `30-knowledge/people/` — and the graph view shows its first
-connections. (Company brain: "About this vault" plus your first roles
-under `60-roles/`; there are no notes about people there, on purpose.)
-(Skipped it? Fine — it waits as an open question on `Home`.)
-
----
+**Checkpoint:** "About me" and people notes under
+`30-knowledge/people/` exist, and the graph view shows first
+connections. Company brain: "About this vault" and roles under
+`60-roles/`, no notes about people. Skipped it? It waits as an open
+question on `Home`.
 
 ## Stage 5 — Practice the five verbs (5 min)
 
-**1. Capture** — in any Claude session:
-> capture: idea for the next project — draft the outline by Friday
+| Verb | Say |
+|---|---|
+| **Capture** (any session) | `capture: idea for the next project — draft the outline by Friday` |
+| **Ingest** (a PDF in `~/Brain/00-inbox/raw/`) | `ingest` |
+| **Ask** (answers only from your notes) | `what does my brain know about my first project?` |
+| **Review** (weekly, or now to test) | `brain review` |
+| **Research** (fills open questions with sourced facts) | `research my brain` |
 
-**2. Ingest** — drop a PDF (handout, paper, contract, manual) into
-`~/Brain/00-inbox/raw/` and say:
-> ingest
-
-**3. Ask** — the librarian, answers only from your notes:
-> what does my brain know about my first project?
-
-**4. Review** — weekly (or right now, to test it):
-> brain review
-
-**5. Research** — the power move:
-> research my brain
-
-✅ **Checkpoint:** After the review, the only things still sitting in
-`00-inbox/` are `Inbox rule.md`, `index.md`, `CLAUDE.md` and the `raw/`
-folder. **Those always stay** — the rule page is a permanent instruction sheet, and `raw/` is
-the drop zone for the next PDF. "Inbox to zero" means every *capture* is
-gone: yours has become a linked note somewhere else, and `Home` lists it
-under "New this week". The review also runs a check for orphaned notes
-and dead links and tells you what it fixed.
-
----
+**Checkpoint:** after the review, `00-inbox/` holds only
+`Inbox rule.md`, `index.md`, `CLAUDE.md` and `raw/`. **Those always
+stay**: a permanent instruction sheet and the drop zone for PDFs. Each
+capture is now a linked note, listed on `Home` under "New this week",
+and the review reports the orphans and dead links it fixed.
 
 ## Your first week
 
 | Day | What to do |
 |---|---|
-| Day 1 | Setup (this tutorial) — interview now or later |
-| Day 2–4 | Only **capture** — every idea, date, person. No sorting! |
-| Day 5 | First **"brain review"** — watch the inbox turn into notes and `Home` refresh itself |
-| Day 6–7 | Pull the first **output**: "Build me a study sheet / project plan / draft for X from my notes" — and try **"research my brain"** (Claude fills your open questions with sourced facts) |
+| Day 1 | Setup (this tutorial); interview now or later |
+| Day 2–4 | Only **capture**: every idea, date, person. No sorting. |
+| Day 5 | First **"brain review"** |
+| Day 6–7 | Ask for the first **output** ("Build me a study sheet / project plan / draft for X from my notes") and try **"research my brain"** |
 
-After that the system carries itself: capture on the side, ten minutes of
-review per week — and if you disappear for a month, the next review just
-catches up. **The success metric is output** — if the brain hasn't gifted
-you a text, plan or study sheet after two weeks, tell Claude exactly that.
-
----
+Then: capture as you go and review ten minutes a week; after a month
+away, the next review catches up. **Measure it by output:** no text,
+plan or study sheet after two weeks? Tell Claude exactly that.
 
 ## If something breaks
 
-→ [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — and when in doubt: **just ask
-Claude** ("why isn't my inbox empty?").
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md), or ask Claude ("why isn't
+my inbox empty?").

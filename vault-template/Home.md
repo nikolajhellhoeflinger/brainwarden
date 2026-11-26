@@ -1,16 +1,14 @@
-<!-- Machine anchors: the four dashboard blocks are delimited by
-     `<!-- block:NAME -->` … `<!-- /block:NAME -->`. Address them by
-     MARKER, never by heading text — headings are translated into the
-     vault language, markers never are. Refreshing a block means
-     replacing only the lines BETWEEN its marker pair; markers,
-     headings and everything below the `---` stay untouched. Lines
-     carrying `<!-- keep:… -->` survive every refresh — update their
-     content, never delete the line. Agents looking for paths rather
-     than prose: read index.md instead. -->
+<!-- Machine anchors: each dashboard block sits between
+     `<!-- block:NAME -->` and `<!-- /block:NAME -->`. Address blocks by
+     MARKER, never by heading text (headings get translated). A refresh
+     replaces only the lines BETWEEN a marker pair; markers, headings and
+     everything below the `---` stay. A line carrying `<!-- keep:… -->`
+     survives every refresh: update its content, never delete it. For
+     paths rather than prose, read index.md. -->
 
-Your brain at a glance. You can't get lost: every path leads back here.
-(Claude fills and updates this page — starting during setup. No heading
-here on purpose — Obsidian already shows the filename as the title.)
+Your brain at a glance; every path leads back here. Claude fills and
+updates this page, starting during setup. (No heading: Obsidian shows
+the file name as the title.)
 
 ## Right now
 <!-- block:right-now -->

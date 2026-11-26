@@ -6,25 +6,19 @@
     python3 .tools/transcribe.py --language de
     python3 .tools/transcribe.py --auto on    # let the weekly runner's 20-minute tick do it
 
-(Windows: `py -3`.) The idea you have while walking is the one that gets
-lost: nobody types a note into a phone at a traffic light. Speaking is fast,
-but an audio file is a dead end for a brain — no search finds it, no review
-files it, no agent can read it. So a memo has to become text before the
-brain can use it, and it should not have to leave the computer for that.
+(Windows: `py -3`.) Any way of getting a file into `00-inbox/` works: the
+Obsidian app with the vault synced (Obsidian Sync, iCloud on iPhone,
+Syncthing on Android), "Save to Files" from the phone's recorder, a shared
+folder. Audio formats: m4a, mp3, wav, ogg/opus, webm, aac, flac, amr, caf.
 
-How it gets here: anything that puts a file into `00-inbox/` works — the
-Obsidian app on the phone with the vault synced (Obsidian Sync, iCloud on
-iPhone, Syncthing on Android), "Save to Files" from the phone's recorder, a
-shared folder. Audio formats: m4a, mp3, wav, ogg/opus, webm, aac, flac, amr,
-caf. What this does with it: transcribes it LOCALLY with the first engine it
-finds, writes `00-inbox/YYYY-MM-DD-voice-<first words>.md` (an ordinary
-capture — the weekly review files it like any other), and moves the audio
-next to the archive (`90-…/voice/`), embedded in the note so it can still be
-played. Nothing is uploaded, no account, no model call.
+Each memo is transcribed LOCALLY with the first engine found and written to
+`00-inbox/YYYY-MM-DD-voice-<first words>.md`, an ordinary capture. The
+audio moves to the archive (`90-…/voice/`), embedded in the note so it can
+still be played. Nothing is uploaded, no account, no model call.
 
-Needs ffmpeg (ffmpeg.org; macOS: `brew install ffmpeg`), which every engine
-below uses anyway: each recording is converted to a plain WAV first, with its
-format named explicitly, and only that WAV reaches an engine.
+Needs ffmpeg (ffmpeg.org; macOS: `brew install ffmpeg`): each recording is
+converted to a plain WAV first, with its format named explicitly, and only
+that WAV reaches an engine.
 
 Engines, in this order (install one; none comes with the kit):
   1. a command of your own: `.tools/transcribe.json` →
@@ -35,13 +29,12 @@ Engines, in this order (install one; none comes with the kit):
   4. faster-whisper (Python):        pip install faster-whisper
   5. openai-whisper (`whisper`):     pip install openai-whisper
 The first run of 2, 4 and 5 downloads a speech model (hundreds of MB to
-~1.6 GB) — run it once by hand, so that download does not happen silently
-in a background job. Then `--auto on` lets the runner's tick pick memos up
+~1.6 GB): run it once by hand, so the download does not happen silently in
+a background job. Then `--auto on` lets the runner's tick pick memos up
 within 20 minutes (needs `autoreview.py install`).
 
-Known limit: speech models invent text on silence (a "thank you for
-watching" on an empty recording). The note keeps the audio embedded, so the
-review can listen before it trusts a strange sentence.
+Known limit: speech models invent text on silence. The note keeps the
+audio embedded, so the review can listen before trusting an odd sentence.
 """
 from __future__ import annotations
 
@@ -127,13 +120,12 @@ def python_has(module):
 
 
 def run_text(argv):
-    """Every engine runs in an empty folder of its own. `python -c` puts the
-    current folder first on the import path, and the vault is a folder the
-    unattended review writes into: a planted `faster_whisper.py` there would
-    run with the next tick's rights."""
+    """Every engine runs in an empty folder of its own: `python -c` puts the
+    current folder first on the import path, and a `faster_whisper.py`
+    planted in the vault would run with the next tick's rights."""
     with tempfile.TemporaryDirectory() as neutral:
-        # UTF-8 out of every Python engine: on Windows a child prints in the old
-        # code page, and "für" arrived as "f\ufffdr" (seen in CI)
+        # UTF-8 out of every Python engine: on Windows a child prints in the
+        # old code page ("für" becomes "f\ufffdr")
         r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=TIMEOUT, cwd=neutral, stdin=subprocess.DEVNULL,
                            env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
@@ -194,13 +186,12 @@ UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 
 def container(path):
-    """The recording's container, read from its first bytes — None when it is
+    """The recording's container, read from its first bytes; None when it is
     not one. The name proves nothing: a TEXT file called memo.m4a holding a
-    playlist (#EXTM3U …) or an ffconcat list makes a decoder that guesses the
-    format fetch the URLs or read the files it lists, and anything that can
-    write a text file into the inbox could send vault text to a URL that way.
-    So the format is decided HERE and handed to ffmpeg explicitly (`-f`):
-    ffmpeg never guesses, and a playlist demuxer is never chosen."""
+    playlist (#EXTM3U …) or an ffconcat list makes a guessing decoder fetch
+    the URLs or read the files it lists, which could send vault text to a
+    URL. So the format is decided HERE and passed to ffmpeg (`-f`): ffmpeg
+    never guesses, and a playlist demuxer is never chosen."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(16)
@@ -234,9 +225,9 @@ def ffmpeg_cmd():
 
 
 def to_wav(audio, tmp):
-    """Copy, check, convert — in a folder nobody else writes to, so the bytes
-    that were checked are the bytes that get decoded. Every engine then reads
-    a plain 16 kHz WAV this function wrote, never the inbox file itself."""
+    """Copy, check, convert in a folder nobody else writes to, so the bytes
+    checked are the bytes decoded. Engines read only the 16 kHz WAV written
+    here, never the inbox file."""
     copy = Path(tmp) / ("in" + audio.suffix.lower())
     shutil.copyfile(audio, copy)
     fmt = container(copy)

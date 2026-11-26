@@ -1,36 +1,15 @@
 #!/usr/bin/env python3
-"""Assemble a vault from the template — one command instead of up to nine.
+"""Assemble a vault from the template.
 
     python3 assemble.py ~/Brain personal
     python3 assemble.py ~/Brain-work professional
-    python3 assemble.py ~/Firma company
+    python3 assemble.py ~/Acme company
 
-Why this exists rather than a sequence of `cp` and `rm` commands:
-
-  - **One permission prompt instead of up to nine.** The sequence this
-    replaces was two commands for `personal` and nine for `company`.
-    Visual processing of warning dialogs drops off measurably from the
-    SECOND one onward (Anderson et al., CHI 2015). A setup that asks
-    twenty times has trained the person to click through by dialog three
-    — and the one they stop reading first is the one that matters.
-  - **No `rm -rf` on the path a first-time user walks.** The old sequence
-    copied everything and then deleted the scaffolding, which meant the
-    scariest-looking command in the whole setup arrived while the human was
-    still deciding whether to trust this thing at all. Here the scaffolding
-    is simply never copied.
-  - **The same on every platform.** No BSD-vs-GNU `cp`, no `rm -rf` that
-    behaves differently under PowerShell.
-  - **It refuses to overwrite.** Existing files are never touched, and the
-    script says which ones it skipped. Adopting an existing vault stays a
-    deliberate act, not an accident. That is the one sentence here a human
-    reads while deciding whether to trust this, so it is not left to the
-    code being right: `check.py` fills a folder with its own notes, runs all
-    three modes over it, and fails if a single byte moved
-    (`check_promise_not_to_overwrite`).
-
-It does exactly one job: put the right files in the right place. Filling
-them in — the questions, the first notes, the language — is the setup
-runbook's job, and it needs a human in the conversation.
+Copies the core, then the overlays the mode needs (`processes/` for
+professional and company, `company/` for company), and leaves `modules/`
+and the company drop list out. It never overwrites a file it did not write
+itself in this run, and lists what it left untouched; `check.py` verifies
+that byte for byte. Filling the vault in is the setup runbook's job.
 """
 import argparse
 import os

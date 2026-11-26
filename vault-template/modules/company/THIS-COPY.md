@@ -15,10 +15,8 @@ review_due: {{DATE}}   # setup: today + 12 months — NOT today, or this page ex
 
 **This copy is from: {{DATE}}**
 
-This is the one real weakness a folder has against a web page. A web page
-is current by definition; a folder ages separately on every machine it
-sits on. So the date goes here, and this file sits at the front of the
-signpost.
+A folder, unlike a web page, ages separately on every machine it sits
+on. This date is how you tell.
 
 ## For everyone: is your copy still fresh?
 
@@ -33,18 +31,18 @@ Compare the date above with today.
   Claude checks and updates it when a pull path is set up. If none is,
   it tells you who to ask.
 
-**Your own notes are safe.** Anything in `00-inbox/` and your drafts in
+**Your own notes are safe.** `00-inbox/` and your drafts in
 `00-inbox/suggestions/` live only on your machine and are not
 overwritten. Submit the ones that are ready before you update.
 
 **"Submit" needs a real route, and only your company can name it.** A
-file you wrote in your own copy is invisible to everyone else until
-something carries it back. Whoever set this vault up fills the second
-marker below with the actual route — the same channel you would use for
-anything else (a shared folder, a mail address, "drop it in the office"),
-not a new tool. Until that line is answered, write your suggestions
-anyway and tell the person named under "Who may release content" in
-[About this vault.md](About%20this%20vault.md) that they exist.
+file in your own copy is invisible to everyone else until something
+carries it back. Whoever set this vault up fills the marker below with
+the actual route — the channel you would use for anything else (a shared
+folder, a mail address, "drop it in the office"), not a new tool. Until
+then, write your suggestions anyway and tell the person named under "Who
+may release content" in [About this vault.md](About%20this%20vault.md)
+that they exist.
 
 > TO FILL IN (knowledge owner): Where does a finished suggestion go so
 > that someone else sees it? Replace this line with the actual route.
@@ -53,12 +51,10 @@ anyway and tell the person named under "Who may release content" in
 
 1. Work the changes into the main copy and release them (`status: stable`
    plus `verified:`).
-2. **Raise the date at the top of this file.** This is the step that gets
-   forgotten — without it nobody can tell there is anything new. Nothing
-   automates it: the weekly review empties the inbox and commits, but it
-   does not date this file and does not send anything anywhere. Put both
-   on the review's checklist by hand, or the corrections stay on one
-   machine.
+2. **Raise the date at the top of this file** — without it nobody can
+   tell there is anything new. The weekly review (`brain-review`,
+   company mode) prompts this step and the next; nothing else automates
+   them.
 3. Distribute: either everyone pulls from the shared remote, or you send
    a dated package.
 
@@ -66,21 +62,17 @@ anyway and tell the person named under "Who may release content" in
 > shared access to the Git remote, or a ZIP by mail? And who sends it?
 > Replace this line once it is decided.
 
-**If you distribute through Git and more than one person commits:** two
-people editing the same note on the same day is a merge conflict, and it
-will happen in the first month. The rule that keeps it boring: only the
-maintainer's copy is written to; everyone else's copy is read-only and
-their contributions travel as files in `00-inbox/suggestions/`, never as
-commits. One writer, many readers — that is what the release step in
-[About this vault.md](About%20this%20vault.md) already assumes. If you
-genuinely need several writers, that is a Git workflow (branches, pull
-requests) and this kit does not teach one.
+**Distributing through Git with more than one committer?** Two people
+editing the same note on the same day is a merge conflict. Keep one
+writer: only the maintainer's copy is written to; everyone else's is
+read-only, and their contributions travel as files in
+`00-inbox/suggestions/`, never as commits (the release step in
+[About this vault.md](About%20this%20vault.md) assumes this). Several
+writers need a Git workflow (branches, pull requests), which this kit
+does not teach.
 
-**Why this matters more than it looks.** A shared vault fails in a
-specific way: not with a wrong answer, but with an answer that was right
-last quarter. Nobody notices, because a stale note looks exactly like a
-current one. The date is the only thing standing between the two, which
-is why it is a file of its own rather than a line in a footer.
+A stale note looks exactly like a current one; this date is the only
+thing that tells them apart.
 
 ## What changed recently
 

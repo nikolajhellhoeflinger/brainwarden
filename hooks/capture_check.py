@@ -1,59 +1,28 @@
 #!/usr/bin/env python3
 """Brainwarden — capture check (Claude Code "Stop" hook, opt-in).
 
-The problem it solves: capture is a habit, and habits lapse. You work two
-days straight, decisions get made, dates get mentioned — and none of it
-reaches the brain, because nobody said "capture:". This is the net under
-that.
-
-How it works: at the end of a turn it checks ONE thing — has anything been
-written to the vault's inbox or decisions folder recently? If yes, it stays
-silent. If no, it makes Claude check the five capture triggers once, and
+At the end of a turn it checks whether a `.md` file in the vault's inbox
+(`00-*`) or decisions (`40-*`) folder changed recently. If yes, it stays
+silent. If no, it asks Claude once to check the five capture triggers and
 capture what is worth keeping.
 
-WHY IT BACKS OFF BY ITSELF
---------------------------
-A reminder on a fixed timer is a nagger, and naggers get switched off. So
-this one keeps score, and the score decides how often it may speak:
+It backs off by itself. After asking, it checks whether anything landed:
 
-    it asks  →  did anything land in the vault afterwards?
-       yes   →  it may ask twice as often   (down to 1× BASE/4)
-       no    →  it asks half as often       (up to 16× BASE)
-                after five empty answers in a row it goes to sleep
-                entirely, and wakes up only when the vault starts
-                filling again.
+    yes  ->  asks twice as often   (down to BASE/4)
+    no   ->  asks half as often    (up to 16x BASE)
+             after five empty answers in a row it sleeps until the
+             vault fills again.
 
-What it can honestly measure, and what it cannot: it CANNOT tell whether
-you answered, or what you said. It only compares file timestamps — did a
-`.md` file appear in the `00-*` or `40-*` folder after it asked? That
-proxy is imperfect in a known direction: a capture you write by hand counts
-as a hit, and a turn you interrupt counts as a miss. Both are the right
-answer for the purpose — the question is not "was I obeyed" but "is this
-check still earning the interruption".
+It compares file timestamps only and cannot tell what you answered: a
+capture written by hand counts as a hit, an interrupted turn as a miss.
 
-The whole score is three numbers in a text file next to the config
-(`state/brainwarden-capture-check`): when it last spoke, when it last
-asked, and the current level. Delete the file and everything is back to
-factory settings. `python3 <vault>/.tools/harvest.py --queue` prints it in
-plain language.
+State: three numbers in `<config>/state/brainwarden-capture-check` (last
+spoke, last asked, level). Delete the file to reset;
+`python3 <vault>/.tools/harvest.py --queue` prints it.
 
-Why it is built this way, and not smarter:
-
-  - The pre-filter is a walk over the inbox and decisions folders comparing
-    modification times. No model call, no cost, no network. It costs
-    nothing until it actually fires, which matters if you use Claude Code
-    all day.
-  - It never writes anything into the vault by itself. Systems that
-    silently hoard everything drown in their own junk — an audit of 10,134
-    auto-captured memories in another system found 97.8% worthless. This
-    one prompts a decision; it does not make one.
-  - It records no content anywhere. Three integers, and nothing else.
-  - If it cannot write its own state file it stays SILENT instead of
-    speaking, because a reminder that cannot remember it already spoke
-    would repeat on every single turn.
-
-Python, not bash, so it behaves the same on macOS, Linux and Windows and
-needs no `jq`. Python is already required by the vault's own tools.
+It never calls a model or the network, never writes into the vault and
+records no content. If it cannot write its state file it stays silent,
+since it could not remember that it already asked.
 
 Install (opt-in — the setup does not do this for you):
 
@@ -72,8 +41,7 @@ Uninstall: delete the file, remove the entry. Nothing else changes.
 Silence it without uninstalling: `BRAINWARDEN_CAPTURE_CHECK=off`.
 
 Tuning: BRAINWARDEN_CAPTURE_WINDOW (minutes, default 240) sets the BASE
-interval — the level ladder above moves around it. If it still asks more
-often than you want, raise the base; the ladder will do the rest by itself.
+interval the back-off moves around. If it still asks too often, raise it.
 """
 import json
 import os
@@ -81,7 +49,7 @@ import re
 import sys
 import time
 
-DEFAULT_WINDOW = 240             # minutes — the base the ladder moves around
+DEFAULT_WINDOW = 240             # minutes — the base the back-off moves around
 MIN_LEVEL, MAX_LEVEL = -2, 4     # BASE/4  …  BASE*16
 DORMANT = MAX_LEVEL + 1          # asleep: only ever checks for a reason to wake
 RESOLVE_AFTER = 30 * 60          # seconds before an unanswered ask counts as empty
@@ -111,15 +79,14 @@ def state_path():
 
 
 def vault_path():
-    """Read the vault location from the `Brain vault:` line in the global
-    rules — the same line every brain-* skill follows. Falls back to
-    ~/Brain only when no line is set."""
+    """The vault from the `Brain vault:` line in the global rules (the line
+    every brain-* skill follows); ~/Brain when no line is set."""
     rules = os.path.join(config_dir(), "CLAUDE.md")
     try:
         with open(rules, encoding="utf-8-sig", errors="ignore") as fh:
             for line in fh:
-                # read the way people actually write it: bold, in backticks,
-                # with a remark after it — same reading as project_context.py
+                # accepts bold, backticks and a trailing remark, like
+                # project_context.py
                 m = re.match(r"\s*[-*]?\s*(?:\*\*)?\s*Brain vault:\s*(?:\*\*)?\s*(.+)", line)
                 if not m:
                     continue
@@ -139,13 +106,10 @@ MODE_LINE = re.compile(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b"
 
 
 def session_vault(cwd):
-    """The vault this session works IN, if it is one: the folder (or one
-    above it) with a kit mode line in its CLAUDE.md, the kit's tools and an
-    inbox. That is the first rule every brain-* skill follows; without it, a
-    session in a company vault was asked to capture into the private one.
-    All three, not just "a CLAUDE.md that says Mode:": a code repository
-    whose rules file happens to say so must never become the place where
-    private captures are written."""
+    """The vault this session works in, if any: cwd or a parent with a kit
+    mode line in its CLAUDE.md, the kit's tools and an inbox. All three are
+    required, so a code repository whose rules mention a mode never
+    receives private captures."""
     here = os.path.abspath(cwd) if cwd else ""
     for _ in range(12):
         if not here:
@@ -166,14 +130,8 @@ def session_vault(cwd):
 
 
 def watched_folders(vault):
-    """(inbox, decisions) — found by NUMBER, not by name.
-
-    A vault whose folder names were translated carries `40-entscheidungen`
-    or `40-decisiones`. Matching the English spelling meant the decisions
-    folder was silently never watched: capture a decision, and the hook
-    still counted the turn as "nothing reached the brain". The numeric
-    prefix is what the numbering scheme is for.
-    """
+    """(inbox, decisions), found by number prefix, not by name, so
+    translated folders such as `40-entscheidungen` are still watched."""
     inbox = decisions = None
     try:
         for name in sorted(os.listdir(vault)):
@@ -189,8 +147,8 @@ def watched_folders(vault):
 
 
 def landed_since(folders, cutoff):
-    """Any .md file in there touched at or after `cutoff`? First hit wins —
-    no need to walk the whole tree."""
+    """Any .md file in there modified at or after `cutoff`? Stops at the
+    first hit."""
     for folder in folders:
         if not os.path.isdir(folder):
             continue
@@ -208,8 +166,8 @@ def landed_since(folders, cutoff):
 
 
 def read_state():
-    """`key=value` lines, so a human can read and edit it. An older install
-    left a bare timestamp here — that still parses as "last spoke then"."""
+    """`key=value` lines, editable by hand. A bare epoch (old format) still
+    parses as `last`."""
     st = {"last": 0.0, "asked": 0.0, "level": 0}
     path = state_path()
     try:
@@ -241,9 +199,8 @@ def read_state():
 
 
 def write_state(st):
-    """True only if the state really reached the disk. A hook that cannot
-    remember that it spoke must not speak — otherwise it repeats forever,
-    which is what a read-only or occupied state path used to cause."""
+    """True only if the state reached the disk. A hook that cannot remember
+    that it spoke must not speak, or it repeats on every turn."""
     path = state_path()
     body = (
         "# brainwarden capture check — delete this file to reset\n"
@@ -268,15 +225,10 @@ def write_state(st):
 
 
 def read_stdin():
-    """The payload as text, whatever the shell hands us.
-
-    Two ways this used to fail. A closed stdin (`0<&-`) makes `sys.stdin`
-    None, and `None.isatty()` raised — the hook then did nothing at all.
-    And reading through the text layer uses the LOCALE encoding, so on a
-    cp1252 Windows console a vault path like `Größenwahn Brain` arrived as
-    `GrÃ¶ÃŸenwahn Brain`. The payload is JSON, which is utf-8 by
-    definition, so decode the raw bytes and say so.
-    """
+    """The payload as text. A closed stdin (`0<&-`) makes `sys.stdin` None.
+    The raw bytes are decoded as utf-8 (JSON is utf-8); the text layer would
+    use the locale encoding and garble non-ASCII paths on a cp1252 Windows
+    console."""
     stream = sys.stdin
     if stream is None:
         return ""
@@ -321,8 +273,7 @@ def main():
     st = read_state()
     from_our_block = bool(payload.get("stop_hook_active"))
 
-    # 1. Score the last ask, if one is still open. This is the whole
-    #    learning mechanism: did anything land after we asked?
+    # 1. Score the open ask, if any: did anything land after we asked?
     if st["asked"]:
         if from_our_block or now - st["asked"] >= RESOLVE_AFTER:
             hit = landed_since(folders, st["asked"])
@@ -335,13 +286,13 @@ def main():
     if from_our_block:
         return 0
 
-    # 2. One action per interval, at most. The interval is the level's.
+    # 2. At most one action per interval of the current level.
     if now - st["last"] < window_seconds(st["level"]):
         return 0
     st["last"] = now
 
-    # 3. Something reached the brain within the interval? Then all is well —
-    #    and if we were asleep, that is the signal to wake up.
+    # 3. Something reached the brain within the interval: stay silent, and
+    #    wake up if asleep.
     if landed_since(folders, now - window_seconds(st["level"])):
         if st["level"] == DORMANT:
             st["level"] = 0

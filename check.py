@@ -1,36 +1,15 @@
 #!/usr/bin/env python3
-"""Brainwarden self-check — run it before you push; GitHub runs it again after.
+"""Brainwarden self-check. Run it before you push; CI runs it on every push.
 
     ./check.sh          macOS · Linux · Git Bash
     py -3 check.py      Windows PowerShell / cmd
     python3 check.py    anywhere
 
-Assembles all three vault modes from the template and measures them, so a
-broken signpost or a stale reference is caught here and not by whoever
-installs the kit next. Locally it needs nothing but python3 and about two
-seconds; .github/workflows/check.yml runs the identical file on macOS, Linux
-and Windows for every push, so a red job there is always reproducible here.
-
-Why this is Python and not the bash script it used to be. Three reasons, in
-the order they were found:
-
-  1. The bash version reported "all checks passed" while hygiene.py crashed
-     on all three modes. The line was `hygiene.py | grep -qE …`: in a pipe
-     the exit status is grep's, a crashed tool prints nothing, grep finds
-     nothing, and "no findings" reads exactly like "clean". Every check
-     downstream of that pipe was decoration. Here every tool is run with
-     subprocess and its RETURN CODE is checked before its output is.
-  2. It measured 4 of hygiene's 8 rubrics. The grep listed dead links,
-     orphans, missing index.md and frontmatter gaps — a template with a
-     one-sided supersede chain, an expired note or an unreachable note
-     passed. Here every rubric hygiene prints must be zero, so a rubric
-     added later is enforced the day it appears, without touching this file.
-  3. bash, mktemp, find, sed, grep, cp -R and rm -rf are six dependencies
-     that behave differently on BSD and GNU and do not exist in PowerShell
-     at all. python3 is already a hard requirement of the kit — the vault's
-     own tools are written in it. So this adds nothing and removes six.
-
-check.sh still exists and still works; it only looks for a python now.
+Assembles all three vault modes from the template and runs the vault's own
+tools against them and against small fixtures: every hygiene rubric must be
+zero, every tool's exit code is checked before its output, and the
+unattended review runs against a stand-in for `claude`. Needs only python3;
+.github/workflows/check.yml runs the same file on macOS, Linux and Windows.
 """
 import importlib.util
 import io
@@ -94,9 +73,7 @@ def load_company_drops():
 
 def check_compiles():
     targets = [tool(n) for n in ("search.py", "hygiene.py", "harvest.py", "transcribe.py", "people.py")]
-    # progress.py lebt im company-Overlay und war deshalb in keiner Liste —
-    # ein Syntaxfehler darin ging grün durch, obwohl genau dieses Werkzeug
-    # die eine Zahl liefert, auf die sich ein Firmen-Vault verlässt.
+    # progress.py lives in the company overlay, so it is listed explicitly.
     prog = os.path.join(TEMPLATE, "modules", "company", ".tools", "progress.py")
     if os.path.exists(prog):
         targets.append(prog)
@@ -1915,7 +1892,7 @@ def set_mode(vault, mode):
     checked vault still carried `{{LANGUAGE}}` and `{{COMPANY}}` everywhere,
     and a new placeholder could never be noticed by anything.
     """
-    werte = {"{{MODE}}": mode, "{{LANGUAGE}}": "English",
+    values = {"{{MODE}}": mode, "{{LANGUAGE}}": "English",
              "{{COMPANY}}": "Example GmbH"}
     for dirpath, dirs, files in os.walk(vault):
         dirs[:] = [d for d in dirs if d not in ("_templates", ".tools", ".git")]
@@ -1925,12 +1902,12 @@ def set_mode(vault, mode):
             path = os.path.join(dirpath, name)
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
-            neu = text
-            for k, v in werte.items():
-                neu = neu.replace(k, v)
-            if neu != text:
+            new_text = text
+            for k, v in values.items():
+                new_text = new_text.replace(k, v)
+            if new_text != text:
                 with open(path, "w", encoding="utf-8", newline="\n") as fh:
-                    fh.write(neu)
+                    fh.write(new_text)
 
 
 REPORT = re.compile(r"^(?P<title>\S.*?): (?P<n>\d+)(?: \(.*\))?$")
@@ -2030,9 +2007,7 @@ def check_mode(mode, tmp):
     else:
         ok(f"{mode} signpost pairs")
 
-    # Ein Platzhalter-Inventar statt nur {{MODE}}. Vorher konnte ein neuer
-    # Token ({{TIMEZONE}}, {{FIRMA}}) unbemerkt im ausgelieferten Vault
-    # stehen bleiben — die Prüfung kannte genau einen.
+    # Every placeholder token, not just {{MODE}}: a new one must not ship unset.
     rest = set()
     for dirpath, dirs, files in os.walk(vault):
         dirs[:] = [d for d in dirs if d not in ("_templates", ".tools", ".git", ".claude")]
@@ -2044,32 +2019,29 @@ def check_mode(mode, tmp):
                     rest.update(re.findall(r"\{\{[A-Z_]+\}\}", fh.read()))
             except OSError:
                 continue
-    # {{DATE}} und {{NAME}} füllt erst das Runbook je Notiz — hier ist der
-    # Vault noch roh, also gehören sie nicht in diese Prüfung.
+    # {{DATE}} and {{NAME}} are filled per note by the runbook, not here.
     rest -= {"{{DATE}}", "{{NAME}}"}
     if rest:
         bad(f"{mode} placeholders resolved", "still unset: " + ", ".join(sorted(rest)))
     else:
         ok(f"{mode} placeholders resolved")
 
-    # Ein Wegweiser, aus dem jemand die Einstiege entfernt hat, sieht für
-    # jede bisherige Prüfung gesund aus: Datei da, CLAUDE.md daneben, keine
-    # toten Links. Er führt nur nirgendwo mehr hin.
-    leer = []
+    # A signpost with no entry points passes every other check but leads nowhere.
+    empty_signposts = []
     for dirpath, dirs, files in os.walk(vault):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "_templates"]
         if "index.md" not in files:
             continue
-        hat_notizen = any(f.endswith(".md") and f not in ("index.md", "CLAUDE.md")
+        has_notes = any(f.endswith(".md") and f not in ("index.md", "CLAUDE.md")
                           for f in files)
-        if not hat_notizen:
+        if not has_notes:
             continue
         with open(os.path.join(dirpath, "index.md"), encoding="utf-8") as fh:
-            inhalt = fh.read()
-        if not re.search(r"\]\([^)]+\.md\)", inhalt):
-            leer.append(os.path.relpath(dirpath, vault) or "(root)")
-    if leer:
-        bad(f"{mode} signposts lead somewhere", "no entry points: " + ", ".join(leer[:3]))
+            index_text = fh.read()
+        if not re.search(r"\]\([^)]+\.md\)", index_text):
+            empty_signposts.append(os.path.relpath(dirpath, vault) or "(root)")
+    if empty_signposts:
+        bad(f"{mode} signposts lead somewhere", "no entry points: " + ", ".join(empty_signposts[:3]))
     else:
         ok(f"{mode} signposts lead somewhere")
 
@@ -2081,16 +2053,13 @@ def check_mode(mode, tmp):
             bad("company rules file", "mentions folders this mode does not have")
         else:
             ok("company rules file")
-        # Die GANZE Ausschlussliste, nicht nur ein Eintrag. Vorher war 1 von
-        # 13 geprüft: elf Dateien und zwei Ordner hätten unbemerkt in einem
-        # geteilten Vault landen können — darunter `About me.md` und
-        # `handover.md`, die es dort per Definition nicht gibt.
+        # The whole drop list: none of it may reach a shared vault.
         drops = load_company_drops()
-        reste = [d for d in drops
+        left_over = [d for d in drops
                  if os.path.exists(os.path.join(vault, *d.split("/")))]
-        if reste:
+        if left_over:
             bad("company drop list honoured",
-                f"{len(reste)} of {len(drops)} still there: {', '.join(reste[:3])}")
+                f"{len(left_over)} of {len(drops)} still there: {', '.join(left_over[:3])}")
         else:
             ok(f"company drop list honoured ({len(drops)} entries)")
 
@@ -2245,21 +2214,11 @@ def check_promise_not_to_overwrite(tmp):
             "Home.md": "# Mein eigenes Home\n",
             ".obsidian/app.json": "{}\n",
             "40-entscheidungen/2026-01-01-alt.md": "alt\n"}
-    # Diese vier Proben allein haben eine Luecke, und zwar ausgerechnet dort,
-    # wo der Schaden schon einmal entstanden ist: keine von ihnen liegt auf
-    # einem Pfad aus COMPANY_DROPS. Die Passage, die damals fremde Notizen
-    # mitloeschte, lief ueber genau diese Liste -- gebaut sie jemand wieder
-    # ein, bliebe diese Pruefung gruen. Auch die beiden Nachbarpruefungen
-    # faenden nichts: "drop list honoured" misst Abwesenheit und kann
-    # "nie kopiert" nicht von "kopiert und geloescht" unterscheiden, und
-    # "assembles twice" sieht einen unbedingten Loeschlauf als idempotent.
-    # Eine Zusage, die einem Menschen gedruckt wird, der gerade entscheidet
-    # ob er dem Ding traut, darf nicht davon abhaengen, dass der Code
-    # zufaellig richtig bleibt. Also bekommt jeder Eintrag der Liste eine
-    # eigene Probe.
-    for eintrag in load_company_drops():
-        rel = eintrag if eintrag.endswith(".md") else f"{eintrag}/meins.md"
-        mine[rel] = f"eigene Datei unter {eintrag} — darf nicht angefasst werden\n"
+    # One probe on every COMPANY_DROPS path too: a delete pass over that list
+    # is exactly what could remove someone's own notes.
+    for entry in load_company_drops():
+        rel = entry if entry.endswith(".md") else f"{entry}/meins.md"
+        mine[rel] = f"eigene Datei unter {entry} — darf nicht angefasst werden\n"
     for rel, text in mine.items():
         path = os.path.join(vault, *rel.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)

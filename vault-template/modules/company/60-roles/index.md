@@ -4,11 +4,10 @@ One note per ROLE in this company: what the role is responsible for,
 who stands in for it, and what someone needs to know to fill it.
 
 **Rules here:** `type: role`. Notes are named after the role, never
-after a person (`shift-lead.md`, not `maria.md`). **Why: dossiers about
-employees are a data-protection problem, role descriptions are not** —
-a role note survives every hire and every departure and nobody has to be
-assessed for it. A person's name appears at most as "currently held by",
-one line, and nothing else about them. `owner`, `audience`,
+after a person (`shift-lead.md`, not `maria.md`): **dossiers about
+employees are a data-protection problem, role descriptions are not,**
+and a role note survives every hire and departure. A person's name
+appears at most as "currently held by", one line, nothing else. `owner`, `audience`,
 `confidentiality` and `review_due` are required. Shape:
 [../_templates/role-note.md](../_templates/role-note.md).
 **NOT here:** performance, conduct, health, salary or any assessment of

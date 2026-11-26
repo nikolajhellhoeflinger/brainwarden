@@ -13,30 +13,22 @@ Scoring per file and term:
     body line        word start 1.0 for the first, less for each further
                      one, approaching 5.0 · inside a word 0.4 (max 3.0)
 
-Body mentions have diminishing returns, and that is what keeps the ranking
-honest: summed straight, a project log that happens to write "Vertrag" on a
-hundred lines scored 100.0 and buried `Vertrag.md` — the note that IS about
-contracts — at 11.0. On a 10 MB log it reached 132731.0. Repetition is not
-aboutness. The total from body mentions now stays under one title hit, so
-the file NAMED after the term always wins against one that merely says it
-often — while ten mentions still rank above three.
+Body mentions have diminishing returns and stay under one title hit, so
+the file NAMED after a term beats a log that merely repeats it, while ten
+mentions still rank above three.
 
-Hits INSIDE a word count — German glues words together, so `Vertrag` has
-to find `Rahmenvertrag`, `Kosten` has to find `Mehrkostenforderungen` and
-`Straße` has to find `Taborstraße`. They count LESS than a word start and
-are capped per term, so `test` still cannot be flooded to the top by a
-file that only says `fastest`. Terms shorter than 4 characters match at
-word starts only (`ei`, `an` would otherwise match everything).
+Hits INSIDE a word count, for German compounds (`Vertrag` must find
+`Rahmenvertrag`). They count LESS than a word start and are capped per
+term, so `test` cannot flood a file that only says `fastest` to the top.
+Terms shorter than 4 characters match at word starts only.
 
 Accent-insensitive (cafe matches café, Strasse matches Straße). Output:
 top-k files with matching lines — Claude then reads ONLY those files.
 """
 import os, re, sys, unicodedata
 
-# Windows falls back to the console codepage (cp1252/cp850) the moment the
-# output is redirected or piped — and `↳`, or any arrow inside a matched
-# note line, does not exist there, so the search died with a
-# UnicodeEncodeError. Console streams are utf-8 already; this fixes pipes.
+# Windows writes redirected or piped output in the console codepage
+# (cp1252/cp850), which has no `↳` (UnicodeEncodeError).
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
@@ -62,14 +54,9 @@ VALIDITY = ("draft", "stable", "deprecated")
 
 
 def schema_scales(root):
-    """The scales THIS vault uses, read from its own CLAUDE.md.
-
-    A translated vault writes `status: entwurf | gültig | überholt` in its
-    rules file and in every note. Comparing against the English words then
-    reported every correct note as "outside the schema" — a permanent false
-    finding in exactly the vault that followed its own rules. The rules file
-    is the authority; the English words are only the fallback.
-    """
+    """The scales THIS vault uses, read from its own CLAUDE.md (a translated
+    vault writes `status: entwurf | gültig | überholt`). English is only
+    the fallback."""
     m, v = set(MATURITY), set(VALIDITY)
     try:
         with open(os.path.join(root, "CLAUDE.md"), encoding="utf-8-sig",
@@ -78,8 +65,7 @@ def schema_scales(root):
     except OSError:
         return m, v
     for key, target in (("maturity", m), ("status", v)):
-        # Der Wert endet am Zeilenkommentar: die Schema-Zeile trägt fast
-        # immer eine Erklärung hinter `#`.
+        # the value ends at the `#` comment the schema line usually carries
         hit = re.search(rf"^{key}:[ \t]*([^\n#]*\|[^\n#]*?)[ \t]*(?:#.*)?$",
                         rules, re.M)
         if hit:
@@ -87,9 +73,7 @@ def schema_scales(root):
                           if w.strip())
     return m, v
 
-# Kit infrastructure, not notes. Counting these inflates every number and
-# their code examples ("status: seed | growing | evergreen" in CLAUDE.md)
-# used to be counted as real frontmatter.
+# Kit infrastructure, not notes: counting them would inflate every number.
 INFRA_FILES = {"CLAUDE.md", "index.md", "Home.md", "Deadlines.md",
                "About me.md", "About this vault.md", "Inbox rule.md",
                "README.md", "THIS-COPY.md"}
@@ -101,14 +85,11 @@ UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
 
 def fold(text):
     """Lowercase, German umlauts as their two-letter spelling, other accents
-    stripped — so a query matches however the note happened to be written.
+    stripped, so a query matches however the note was written.
 
-    `ä` is `ae` in German, not `a`. Stripping it to `a` made `länge` miss a
-    note named `interviewlaenge` (measured on a real vault, where file names
-    are written ASCII and the text is not) and, worse, made different words
-    the same one: schon/schön, zahlen/zählen, drucken/drücken. Composed first
-    (NFC), because macOS hands out file names decomposed. Other accents keep
-    being stripped: cafe still matches café."""
+    `ä` is `ae`, not `a`: `länge` must find `interviewlaenge`, and
+    schon/schön must stay different words. Composed first (NFC), because
+    macOS hands out file names decomposed. cafe still matches café."""
     text = unicodedata.normalize("NFC", text.lower()).translate(UMLAUT)
     text = unicodedata.normalize("NFKD", text)
     return "".join(c for c in text if not unicodedata.combining(c))
@@ -125,10 +106,8 @@ def parse_args(argv):
             i += 2
             continue
         if a.startswith("--") and a not in ("--stats", "--resurface"):
-            # Anything else starting with `--` used to vanish without a word,
-            # so `search.py --root /other/vault gold` searched THIS vault for
-            # "gold" and looked like it had honoured the flag. There is no
-            # --root here on purpose: the tool searches the vault it lives in.
+            # Unknown flags are an error, not search terms. There is no
+            # --root: the tool searches the vault it lives in.
             print(f"Unknown option: {a}\n"
                   "Usage: search.py <term> [term2 ...] [--k N] | --stats\n"
                   "(No --root: this tool searches the vault it sits in — run "
@@ -142,9 +121,8 @@ def parse_args(argv):
 def walk_notes(root):
     """Every .md file in the vault, minus tooling folders. Yields (path, relpath)."""
     for dirpath, dirs, files in os.walk(root):
-        # Hidden folders are skipped like in hygiene.py: a vault that ships
-        # its own `.claude/skills/` would otherwise count five SKILL.md files
-        # as notes, and `.private/` would surface in every search.
+        # hidden folders skipped as in hygiene.py (`.claude/skills/`,
+        # `.private/` are not notes)
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
         for f in sorted(files):
             if not f.endswith(".md"):
@@ -167,12 +145,9 @@ def tags_block(text):
     return m.group(0) if m else ""
 
 def lead_block(text):
-    """The `# heading` and the first lines of prose under it — where a note
-    says what it is ABOUT. A person note named after the person says "lawyer,
-    reviews the writing limit" once, right there; project notes that merely
-    mention the lawyer say it on many lines and used to outrank it (measured:
-    the person came fourth for exactly those words). Counted like tags: once
-    per term, never more."""
+    """The `# heading` and the first lines of prose under it, where a note
+    says what it is ABOUT. Counted like tags: once per term, so a note
+    that says "lawyer" once here beats notes mentioning it on many lines."""
     body = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
     heading, prose = "", []
     for line in body.splitlines():
@@ -184,9 +159,8 @@ def lead_block(text):
             if prose:
                 break
             continue
-        # Only prose is a lead: a list or a table under the heading is the
-        # note's content, and a project log's first bullet says what happened
-        # once, not what the note is about.
+        # Only prose is a lead: a list or table is content, and a log's
+        # first bullet is an event, not the subject.
         if s.startswith(("#", "|", ">", "```", "<!--", "- ", "* ", "+ ")) or re.match(r"\d+[.)] ", s) \
                 or s.startswith(("**Datum", "**Date")):
             if prose:
@@ -198,11 +172,8 @@ def lead_block(text):
     return fold(" ".join([heading] + prose))[:400]
 
 def frontmatter(text):
-    """The YAML block at the very top — and nothing else.
-
-    Reading fields with `^status:` over the WHOLE file matches YAML
-    examples inside fenced code blocks; that is how a one-note vault
-    reported two notes with a maturity each."""
+    """The YAML block at the very top and nothing else, so YAML examples
+    in code blocks are not read as fields."""
     m = re.match(r"---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
     return m.group(1) if m else ""
 
@@ -216,16 +187,10 @@ def fm_value(fm, key):
 KIT_PAGE = "<!-- kit-page"
 
 def ist_vorlage(path):
-    """Eine Vorlagendatei - erkannt am Inhalt, nicht am Namen.
-
-    Bisher galt jede Datei mit fuehrendem `_` als Vorlage und wurde
-    stillschweigend uebersprungen: `_privat.md` existierte fuer die Suche
-    und fuer den Zustandsbericht schlicht nicht. Der Ordner `_templates/`
-    ist ohnehin ausgeschlossen; hier geht es um die Vorlage, die daneben
-    liegt (`40-decisions/_template.md`, uebersetzt `_vorlage.md`). Die
-    erkennt man daran, dass ihre Platzhalter noch drinstehen - das gilt in
-    jeder Sprache.
-    """
+    """A template file, recognised by content, not name: a leading `_` alone
+    (`_privat.md`) is an ordinary note. Templates next to notes
+    (`40-decisions/_template.md`, translated `_vorlage.md`) still contain
+    their `{{` placeholders, in any language."""
     try:
         with open(path, encoding="utf-8-sig", errors="ignore") as fh:
             return "{{" in fh.read(4000)
@@ -236,28 +201,16 @@ def ist_vorlage(path):
 def is_infra(rel, text=""):
     """Kit scaffolding: root/folder signposts and the raw/ readme.
 
-    Three rules, in order of how well they survive a translation. The
-    `<!-- kit-page -->` marker is the reliable one — an HTML comment is an
-    exact token that renaming and translating cannot break, the same reason
-    `Home.md` addresses its blocks by marker and not by heading. Then the
-    structural rule, then the English name list for vaults built before the
-    marker existed.
-
-    The name list only holds in an ENGLISH vault — a German one carries
-    `Termine.md`, `Über mich.md`, `Inbox-Regel.md`. Those then counted as
-    notes in `--stats` and, worse, were not halved in the ranking: a
-    deadline page mentions every project in the vault at least once, so it
-    outranked the note actually about the project. The structural rule
-    survives every translation: a vault's own pages sit in its ROOT, its
-    notes sit in a numbered folder."""
+    Three rules, in order of how well they survive translation: the
+    `<!-- kit-page -->` marker; any file in the vault ROOT (notes live in
+    numbered folders); the English name list for vaults built before the
+    marker existed."""
     return (KIT_PAGE in text[:2000] or os.sep not in rel
             or os.path.basename(rel) in INFRA_FILES)
 
 def git_reviews(root):
-    """Review history — only if the vault IS a git repo, not if it sits in one.
-
-    `git -C <vault> log` happily answers from a PARENT repository, which
-    would report someone else's commits as this vault's review history."""
+    """Review history, only if the vault IS a git repo: `git -C <vault> log`
+    also answers from a PARENT repository."""
     import subprocess
     try:
         top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"],
@@ -277,14 +230,12 @@ def git_reviews(root):
         return "reviews: unknown (git log failed)"
     if not log:
         return "reviews: 0 (no commit mentions a review yet)"
-    # Days, not commits: one review often makes several commits (the
-    # unattended runner adds a follow-up, a person may commit twice), and
-    # counting each one inflated the number the review history rests on.
+    # days, not commits: one review often makes several commits
     days = len(set(log))
     return f"reviews: {days} day{'s' if days != 1 else ''} (last {log[0]})"
 
 def stats(root):
-    """--stats: honest numbers about this vault — folders, maturity, age."""
+    """--stats: numbers about this vault (folders, maturity, age)."""
     import collections
     folders = collections.Counter()
     maturity, validity, other_status = collections.Counter(), collections.Counter(), collections.Counter()
@@ -372,12 +323,9 @@ def score_file(text, name, terms):
                 bucket = starts if start_hit else insides
                 if clean not in starts and clean not in insides and len(bucket) < 3:
                     bucket.append(clean)
-        # Diminishing returns instead of a straight sum: the first mention is
-        # worth a full W_BODY (1.0), the hundredth almost nothing, and the
-        # total can never reach BODY_CAP. A plain cap would do the same job
-        # against flooding but would make every file with five or more
-        # mentions score IDENTICALLY, and ties get broken alphabetically —
-        # that throws away real signal to fix a fake one.
+        # Diminishing returns: the first mention is worth a full W_BODY, the
+        # hundredth almost nothing, and the total never reaches BODY_CAP. A
+        # hard cap would tie every file with five or more mentions.
         score += BODY_CAP * hits / (hits + BODY_HALF) + inside_score
     return score, (starts + insides)[:3]
 
@@ -406,11 +354,9 @@ def last_changes(root):
 
 
 def resurface(root, k=3, days=7, quiet=60):
-    """--resurface: the older notes connected to what this week is about.
-    A random revisit opens a note nobody needs this week; this one opens the
-    note that THIS week's notes link to, or that links to them, and that has
-    not been touched for two months — the decision behind a project that is
-    moving again, the person note behind a new capture."""
+    """--resurface: older notes connected to what this week is about. A
+    note qualifies if THIS week's notes link to it or it links to them, and
+    it has not been touched for two months."""
     import datetime
     top = subprocess_top(root)       # realpath("") would be the CURRENT folder, i.e. the vault itself
     if not top or os.path.realpath(top) != os.path.realpath(root):
@@ -424,8 +370,8 @@ def resurface(root, k=3, days=7, quiet=60):
     by_stem = {}
     for rel in notes:
         by_stem.setdefault(fold(os.path.splitext(os.path.basename(rel))[0]), rel)
-    # is_infra reads the OS's own separator: given "a/b.md" on Windows it saw a
-    # root page in every note and skipped them all (seen in CI)
+    # is_infra reads the OS's own separator: on Windows "a/b.md" would look
+    # like a root page
     skip = lambda rel: is_infra(rel.replace("/", os.sep)) or os.path.basename(rel).lower() in ("index.md", "claude.md") \
         or rel.split("/")[0].startswith("00-")
     week = {rel for rel in notes if not skip(rel) and age(rel) is not None and age(rel) <= days}
@@ -492,9 +438,8 @@ def main():
     return 0
 
 def rank(root, terms):
-    """[(score, vault-relative path, sample lines)], best first. The CLI above
-    and exam.py both call this — so the exam measures the very ranking an
-    agent sees, not a copy of it that could drift."""
+    """[(score, vault-relative path, sample lines)], best first. The CLI and
+    exam.py both call this, so the exam measures the ranking an agent sees."""
     terms = [fold(t) for t in terms]
     scored = []
     for path, rel in walk_notes(root):
@@ -503,12 +448,9 @@ def rank(root, terms):
             continue
         score, lines = score_file(text, fold(os.path.basename(rel)[:-3]), terms)
         if score:
-            # Signposts are halved, not hidden. They describe where things
-            # live, so they mention every topic in the vault at least once —
-            # and a folder map scoring above the note it points at is how a
-            # duplicate check misses the twin it was looking for. Halving
-            # keeps "where is X filed?" answerable while a real note on the
-            # subject always wins.
+            # Signposts are halved, not hidden: they mention every topic, so
+            # a real note on the subject must win, while "where is X filed?"
+            # stays answerable.
             scored.append((score * (0.5 if is_infra(rel, text) else 1.0), rel, lines))
     scored.sort(key=lambda s: (-s[0], s[1]))
     return scored
