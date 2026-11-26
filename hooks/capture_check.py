@@ -134,6 +134,32 @@ def vault_path():
     return os.path.expanduser("~/Brain")
 
 
+VAULT_MARK = re.compile(r"^\s*(?:\*\*)?(?:Vault mode|Kit version|Mode)\s*:", re.M | re.I)
+
+
+def session_vault(cwd):
+    """The vault this session works IN, if it is one: the folder (or one
+    above it) whose CLAUDE.md carries a mode line and that has an inbox.
+    That is the first rule every brain-* skill follows; without it, a
+    session in a company vault was asked to capture into the private one."""
+    here = os.path.abspath(cwd) if cwd else ""
+    for _ in range(12):
+        if not here:
+            break
+        try:
+            with open(os.path.join(here, "CLAUDE.md"), encoding="utf-8-sig", errors="ignore") as fh:
+                text = fh.read(65536)
+        except OSError:
+            text = ""
+        if VAULT_MARK.search(text) and watched_folders(here)[0]:
+            return here
+        up = os.path.dirname(here)
+        if up == here:
+            break
+        here = up
+    return None
+
+
 def watched_folders(vault):
     """(inbox, decisions) — found by NUMBER, not by name.
 
@@ -277,7 +303,8 @@ def main():
     if not isinstance(payload, dict):     # valid JSON, unexpected shape
         payload = {}
 
-    vault = vault_path()
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else os.getcwd()
+    vault = session_vault(cwd) or vault_path()
     inbox, decisions = watched_folders(vault)
     folders = [f for f in (inbox, decisions) if f]
 

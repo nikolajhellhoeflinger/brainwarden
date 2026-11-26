@@ -52,8 +52,21 @@ COMPANY_DROPS = [
 ]
 
 
-def copy_tree(src, dst, skipped, overwrite=False, omit=()):
-    """Copy contents of src into dst. Never overwrites unless told to.
+def files_in(folder):
+    """Every file already in `folder`, case-folded (on macOS and Windows
+    `home.md` IS `Home.md`) — the set this run must never overwrite."""
+    out = set()
+    for root, _, files in os.walk(folder):
+        for name in files:
+            out.add(os.path.relpath(os.path.join(root, name), folder).replace(os.sep, "/").casefold())
+    return out
+
+
+def copy_tree(src, dst, skipped, before, omit=()):
+    """Copy contents of src into dst, never over a file in `before` (what was
+    there before this run). A file this run copied a moment earlier is fair
+    game: that is how an overlay replaces a core file — on an adopted folder
+    too, or a company overlay would leave the PERSONAL rules file behind.
 
     `omit` is a set of vault-relative paths that must not be copied at all.
     Not copying beats copying-then-deleting: the delete pass could only ever
@@ -81,7 +94,7 @@ def copy_tree(src, dst, skipped, overwrite=False, omit=()):
             if here_rel in omit:
                 continue
             target = os.path.join(target_dir, name)
-            if os.path.exists(target) and not overwrite:
+            if os.path.exists(target) and here_rel.casefold() in before:
                 skipped.append(os.path.relpath(target, dst))
                 continue
             shutil.copy2(os.path.join(root, name), target)
@@ -147,19 +160,17 @@ def main():
     # A shared vault never receives these in the first place — see copy_tree.
     omit = set(COMPANY_DROPS) if a.mode == "company" else set()
 
-    skipped = []
-    copy_tree(template, vault, skipped, omit=omit)
+    skipped, before = [], files_in(vault) if os.path.isdir(vault) else set()
+    copy_tree(template, vault, skipped, before, omit=omit)
 
     if a.mode in ("professional", "company"):
-        copy_tree(os.path.join(template, "modules", "processes"), vault, skipped,
-                  overwrite=not existing, omit=omit)
+        copy_tree(os.path.join(template, "modules", "processes"), vault, skipped, before, omit=omit)
     if a.mode == "company":
         # The company overlay REPLACES core files that describe folders this
         # mode does not have — a signpost pointing at a missing folder makes
-        # the whole navigation lie. On an adopted vault we do not overwrite;
-        # the runbook walks that case by hand.
-        copy_tree(os.path.join(template, "modules", "company"), vault, skipped,
-                  overwrite=not existing, omit=omit)
+        # the whole navigation lie. A file that was there before is still
+        # never touched; the runbook walks folding it in by hand (3c).
+        copy_tree(os.path.join(template, "modules", "company"), vault, skipped, before, omit=omit)
         # Anything on the list that is here now came from the FOLDER, not from
         # this script. Never delete it — say what it is and let a human decide.
         present = [r for r in COMPANY_DROPS

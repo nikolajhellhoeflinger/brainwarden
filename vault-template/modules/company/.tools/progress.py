@@ -134,7 +134,9 @@ def walk(vault):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("vault", nargs="?", default=".")
+    # default: the vault this script lives in (.tools/..), like the other tools —
+    # "." measured whatever folder the shell happened to stand in
+    ap.add_argument("vault", nargs="?", default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     ap.add_argument("--open", action="store_true", help="list files with gaps")
     ap.add_argument("--by-role", action="store_true", help="group gaps by who answers")
     a = ap.parse_args()

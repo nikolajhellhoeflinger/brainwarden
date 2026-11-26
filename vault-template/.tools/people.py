@@ -94,7 +94,7 @@ fold = _search().fold
 # ------------------------------------------------------------------ reading
 def read(path):
     try:
-        return unicodedata.normalize("NFC", Path(path).read_text(encoding="utf-8", errors="replace"))
+        return unicodedata.normalize("NFC", Path(path).read_text(encoding="utf-8-sig", errors="replace"))
     except OSError:
         return ""
 
@@ -734,7 +734,10 @@ class LinkedIn:
         else:
             raise SystemExit(f"no LinkedIn export at {self.path} (the .zip as downloaded, or its folder)")
         m = re.search(r"(\d{2})-(\d{2})-(\d{4})", self.path.name)
-        self.as_of = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
+        try:                         # LinkedIn names it MM-DD-YYYY; a renamed file may not
+            self.as_of = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
+        except ValueError:
+            self.as_of = None
 
         def rows(kind, must):
             for text in texts.get(kind, []):

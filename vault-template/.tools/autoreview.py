@@ -117,7 +117,8 @@ TOOLS_OFFERED = "Read,Edit,Write,Glob,Grep,Bash,Skill"
 # BRAINWARDEN_UNATTENDED is set (run_claude sets it), like exam.py does.
 VAULT_TOOLS = ["search.py ", "autoreview.py move ", "autoreview.py delete "]
 EXACT_TOOLS = ["hygiene.py", "harvest.py --queue", "exam.py --record", "people.py upcoming"]
-OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py", "people.py", "transcribe.py"}
+OWN_SCRIPTS = {"hygiene.py", "search.py", "harvest.py", "autoreview.py", "exam.py", "people.py", "transcribe.py",
+               "progress.py"}
 # (exam.py likewise: `--record add …` would write into .tools/, `--backend qmd`
 # would start another program.)
 ALLOWED_TOOLS = ["Read(./**)", "Edit(./**)", "Glob", "Grep", "Skill(brain-review)"] + [
@@ -288,6 +289,11 @@ def is_due(on, last, weekday):
     days = 999 if last is None else (on - last).days
     near = (on.isoweekday() - weekday) % 7 <= 2
     return (near and days >= 5) or days >= 8
+
+
+def quiet_hours(hour, start, end):
+    """23 → 7 runs over midnight; 0 → 7 does not, and must not block all day."""
+    return (hour >= start or hour < end) if start > end else start <= hour < end
 
 
 def git(*args, check=False):
@@ -966,7 +972,38 @@ def _restore_hooks(saved_hooks):
             safe_write(hooks / name, data)
 
 
-def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None):
+def untracked():
+    """Files git does not know and does not ignore — None if git cannot say."""
+    r = git("ls-files", "--others", "--exclude-standard", "-z")
+    return {p for p in r.stdout.split("\0") if p} if r.returncode == 0 else None
+
+
+def set_aside_new(untracked_before):
+    """Files the rolled-back run created: `git reset` leaves them, and the next
+    run would commit them as the week's own work. Moved under .git/ (never
+    part of the history), not deleted — the run only starts while someone is
+    at the computer, and one of them may be a note the person wrote meanwhile."""
+    now = untracked()
+    if untracked_before is None or now is None:
+        say("could not tell which files the run created — new files, if any, were left in place")
+        return []
+    dest = VAULT / ".git" / "brainwarden-rolled-back" / today().isoformat()
+    moved = []
+    for rel in sorted(now - untracked_before):
+        src = VAULT / rel
+        if not (src.is_file() or src.is_symlink()):
+            continue
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src, target)          # a link moves as a link
+        moved.append(rel)
+    if moved:
+        say(f"new files of the rolled-back run set aside in {dest.relative_to(VAULT).as_posix()}/: "
+            + ", ".join(moved[:10]))
+    return moved
+
+
+def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None, untracked_before=None):
     """Undo the whole run: new things in protected places removed (links
     first, before anything is written), git config and hooks restored byte for
     byte, tracked files back to the starting point, plugin settings put back.
@@ -979,7 +1016,8 @@ def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None):
              lambda: sweep(before),
              lambda: _restore_hooks(saved_hooks),
              lambda: restore_files(saved_files or {}, before),
-             lambda: restore_plugin_settings(saved_plugins)]
+             lambda: restore_plugin_settings(saved_plugins),
+             lambda: set_aside_new(untracked_before)]
     for step in steps:
         try:
             step()
@@ -1146,9 +1184,15 @@ def cmd_run(now=False):
     last = last_success()
     if not now and not is_due(today(), last, cfg["weekday"]):
         return 0
+    # ... and not tried and failed today already: a failure retried on every
+    # tick burns usage and fills the history. Tomorrow is soon enough. A run
+    # the computer's sleep cut off did not fail, and may try again.
+    tried = last_run()
+    if not now and tried.get("date") == today().isoformat() and tried.get("status") and not tried.get("slept"):
+        return 0
     # (c) quiet hours: a review at 4 a.m. helps nobody and can wait
     hour = dt.datetime.now().hour
-    if not now and (hour >= cfg["quiet_from"] or hour < cfg["quiet_until"]):
+    if not now and quiet_hours(hour, cfg["quiet_from"], cfg["quiet_until"]):
         return defer(f"quiet hours ({hour}:00)")
     # (d) is anyone actually using the machine? (lesson 2)
     idle = None
@@ -1196,24 +1240,30 @@ def _run_locked(cfg, cmd, days, idle):
     # Step 2: the run, and at most one retry for a plain failure
     prompt = build_prompt(excluded, extra_tools(cfg))
     before, saved_hooks, saved_plugins = protected(), hooks_copy(), plugin_settings()
-    saved_files = files_copy(before)
+    saved_files, fresh = files_copy(before), untracked()
     offset = log_offset()
     say("review starts")
+
+    def touched_protected():
+        """After EVERY model run, the retry included: what it changed that it
+        must not have. Plugin settings are put back whatever the answer."""
+        try:
+            reset = restore_plugin_settings(saved_plugins)
+            if reset:
+                say("plugin settings put back as they were before the run: " + ", ".join(reset))
+            after = protected()
+            return sorted(k for k in set(before) | set(after)
+                          if before.get(k) != after.get(k) and not harmless(k, before))
+        except Exception as e:      # noqa: BLE001 — fail CLOSED
+            # A check that cannot look has to assume the worst. Letting the
+            # exception through would skip the comparison and keep the changes.
+            say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
+            return [f"(the check itself failed: {e.__class__.__name__})"]
+
     status, took = run_claude(cmd, prompt, cfg)
-    try:
-        reset = restore_plugin_settings(saved_plugins)
-        if reset:
-            say("plugin settings put back as they were before the run: " + ", ".join(reset))
-        after = protected()
-        changed = sorted(k for k in set(before) | set(after)
-                         if before.get(k) != after.get(k) and not harmless(k, before))
-    except Exception as e:      # noqa: BLE001 — fail CLOSED
-        # A check that cannot look has to assume the worst. Letting the
-        # exception through would skip the comparison and keep the changes.
-        say(f"the check after the run failed ({e.__class__.__name__}: {e}) — treating the run as tampered")
-        changed = [f"(the check itself failed: {e.__class__.__name__})"]
+    changed = touched_protected()
     if changed:
-        return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files)
+        return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files, fresh)
     flagged = flagged_since(offset)
     slept = False
     if status and not flagged:
@@ -1224,6 +1274,9 @@ def _run_locked(cfg, cmd, days, idle):
         time.sleep(RETRY_WAIT)
         offset = log_offset()
         status, took = run_claude(cmd, prompt, cfg)
+        changed = touched_protected()
+        if changed:
+            return _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files, fresh)
         flagged = flagged_since(offset)
         slept = bool(status) and not flagged and took > cfg["max_run_s"]
     if status == 0:
@@ -1241,7 +1294,7 @@ def _run_locked(cfg, cmd, days, idle):
         commit_all(f"Review {stamp} (unattended)" if status == 0
                    else f"Weekly run {stamp}: partial work saved after an abort")
     LAST_RUN.write_text(json.dumps({"date": stamp, "base": base, "head": git_head(),
-                                    "status": status, "undone": False}, indent=1) + "\n",
+                                    "status": status, "slept": slept, "undone": False}, indent=1) + "\n",
                         encoding="utf-8")
     # Step 4: make the result visible
     if status == 0:
@@ -1268,15 +1321,16 @@ def _run_locked(cfg, cmd, days, idle):
     return status
 
 
-def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files=None):
+def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_files=None, fresh=None):
     """The run changed files it can never legitimately touch. Nothing it did
     can be trusted, so all of it goes — and the person is told where to look."""
     say("PROTECTED FILES CHANGED — rolling the whole run back: " + ", ".join(changed[:10]))
-    roll_back(base, before, saved_hooks, saved_plugins, saved_files)
+    roll_back(base, before, saved_hooks, saved_plugins, saved_files, fresh)
     write_fail_note(
         "The unattended review changed files it must never touch (kit tools, git hooks, Obsidian "
         f"plugins, Claude settings or a CLAUDE.md): {', '.join(changed[:10])}. That is what a note "
-        "smuggling instructions to the AI would cause. Everything this run did was rolled back.",
+        "smuggling instructions to the AI would cause. Everything this run did was rolled back — "
+        f"files it created are kept outside the notes, in .git/brainwarden-rolled-back/{stamp}/.",
         "Before running it again, look at this week's inbox captures and ingested sources for text "
         "addressed to an AI (\"ignore previous instructions\", \"run …\"). Then catch up in a normal, "
         "supervised chat: *\"brain review\"*.")
@@ -1287,6 +1341,14 @@ def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_fi
                                     "undone": True}, indent=1) + "\n", encoding="utf-8")
     notify("Brain review", "The review was rolled back - read the notice in the inbox.")
     return 3
+
+
+def last_run():
+    try:
+        data = json.loads(LAST_RUN.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def _update_last_run_head():

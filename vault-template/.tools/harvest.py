@@ -500,9 +500,9 @@ def iter_json_array(fh, chunk=1 << 20):
             return
         try:
             item, end = dec.raw_decode(buf, pos)
-            # A number at the very end of the buffer may be cut in half and
-            # still decode; only a delimiter behind it proves it is whole.
-            if end >= len(buf) and not eof:
+            # A number cut in half still decodes ("9071." of 9071.25 reads as
+            # 9071); only a delimiter right behind it proves it is whole.
+            if not eof and (end >= len(buf) or buf[end] not in " \t\r\n,]"):
                 raise ValueError("maybe cut off")
         except ValueError:
             if eof:

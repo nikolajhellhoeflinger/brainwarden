@@ -499,7 +499,7 @@ class Vault:
         """index.md, Home.md and maps of content — the way INTO a folder."""
         name = os.path.basename(rel)
         return (name in ("index.md", "Home.md")
-                or "moc" in norm(name).replace("-", " ").replace("_", " ").split()
+                or "moc" in norm(os.path.splitext(name)[0]).replace("-", " ").replace("_", " ").split()
                 or bool(re.search(r"^type:\s*moc\b", frontmatter(self.notes[rel]), re.M)))
 
 def report(title, items, limit, note=""):

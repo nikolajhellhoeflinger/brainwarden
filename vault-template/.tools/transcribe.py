@@ -335,21 +335,31 @@ def main(argv=None):
     ap.add_argument("--auto", choices=["on", "off"], help="let the runner's tick transcribe")
     ap.add_argument("--quiet", action="store_true", help="print only when something happened (for the tick)")
     a = ap.parse_args(argv)
-    if a.auto:
-        return set_auto(a.auto == "on")
     cfg = load_config()
     found = engine(cfg)
+    # every engine reads a WAV that ffmpeg wrote (to_wav), so ffmpeg is part of "ready"
+    missing = ("no speech engine is installed (see `transcribe.py --help`)" if not found else
+               "ffmpeg is not installed (ffmpeg.org — every recording is converted by it first)"
+               if not ffmpeg_cmd() else "")
     if a.check:
-        print(f"engine: {found[0]}" if found else "engine: none — install one (see `transcribe.py --help`)")
-        return 0 if found else 1
+        print(f"engine: {found[0]}" if found else "engine: none")
+        if missing:
+            print(f"not ready: {missing}")
+        return 1 if missing else 0
+    if a.auto:
+        if a.auto == "on" and missing:
+            # a background tick would fail on every memo, every 20 minutes
+            print(f"not switched on: {missing}")
+            return 1
+        return set_auto(a.auto == "on")
     pending = memos()
     if not pending:
         if not a.quiet:
             print("no voice memos in the inbox")
         return 0
-    if not found:
-        print(f"{len(pending)} voice memo(s) waiting, but no speech engine is installed — "
-              "see `python3 .tools/transcribe.py --help`. They stay where they are.")
+    if missing:
+        if not a.quiet:              # the tick would repeat this every 20 minutes
+            print(f"{len(pending)} voice memo(s) waiting, but {missing}. They stay where they are.")
         return 0
     name, fn = found
     archive = (numbered("90-") or (numbered("00-") / ".transcribed")) / "voice"

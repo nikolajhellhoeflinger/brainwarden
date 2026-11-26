@@ -66,6 +66,10 @@ READ_BYTES = 65536       # per note: the head carries what the brief needs
 SHOW = 3                 # per list
 MIN_NAME = 4             # shorter names match too much text to count as a mention
 DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4})")
+# a record that says it was replaced — at the start of a line, as hygiene.py
+# reads it; a translated status scale ("überholt") is not `deprecated`
+SUPERSEDED = re.compile(r"^[ \t]*(?:[-*>][ \t]*)?\**[ \t]*(superseded by\b|ersetzt durch\b|remplacé par\b)",
+                        re.I | re.M)
 VAULT_MARK = re.compile(r"^\s*(?:\*\*)?(?:Vault mode|Kit version|Mode)\s*:", re.M | re.I)
 
 
@@ -98,7 +102,7 @@ def vault_path():
 def read(path):
     try:
         with open(path, "rb") as fh:
-            return unicodedata.normalize("NFC", fh.read(READ_BYTES).decode("utf-8", "replace"))
+            return unicodedata.normalize("NFC", fh.read(READ_BYTES).decode("utf-8-sig", "replace"))
     except OSError:
         return ""
 
@@ -286,7 +290,7 @@ def decisions(dec_dir, names):
             continue
         text = read(os.path.join(dec_dir, f))
         front, body = split_front(text)
-        if front.get("status", "").lower() == "deprecated" or not mentions(text, names):
+        if front.get("status", "").lower() == "deprecated" or SUPERSEDED.search(body) or not mentions(text, names):
             continue
         title = next((l[2:].strip() for l in body.splitlines() if l.startswith("# ")), f[:-3])
         day = f[:10] if re.match(r"\d{4}-\d{2}-\d{2}", f) else front.get("created", "")[:10]

@@ -239,11 +239,19 @@ def check_harvest_export(tmp):
     spec = importlib.util.spec_from_file_location("harvest_under_test", tool("harvest.py"))
     hv = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hv)
-    doc = [{"name": "x ] [ , \" }", "n": [1, 2.5, -3e2, None, True]}, 12345, "s,]", [], {}, 987654321]
+    # top-level floats too: "9071." of 9071.25 decodes as a whole number
+    doc = [{"name": "x ] [ , \" }", "n": [1, 2.5, -3e2, None, True]}, 12345, "s,]", [], {}, 9071.25, -3e5,
+           987654321]
     text = " \n" + json.dumps(doc, indent=1) + "\n"
-    for chunk in (1, 2, 3, 7, 64):
-        if list(hv.iter_json_array(io.StringIO(text), chunk)) != doc:
-            return bad(label, f"the streaming reader misreads at chunk size {chunk}")
+    # the last body ends a buffer right after "9071." at chunk size 3 (found by fuzzing)
+    for body in (text, json.dumps(doc), '[{"a": [1, 2.75]}, 9071.25, 1, {"a": [1, 2.75]}]'):
+        for chunk in range(1, 10):
+            try:
+                same = list(hv.iter_json_array(io.StringIO(body), chunk)) == json.loads(body)
+            except ValueError:
+                same = False
+            if not same:
+                return bad(label, f"the streaming reader misreads at chunk size {chunk}")
     try:
         list(hv.iter_json_array(io.StringIO(text[:len(text) // 2]), 5))
         return bad(label, "a cut-off conversations.json reads as complete")
@@ -368,6 +376,22 @@ def check_hooks(tmp):
                        text=True, encoding="utf-8", errors="replace", env=dict(env, CLAUDE_CONFIG_DIR=cfg2))
     if inbox not in reason(r.stdout):
         return bad("hooks run", "capture_check misreads a bold `Brain vault:` line in backticks")
+    # a session IN another vault (a company one, started there) captures there —
+    # the first rule of every brain-* skill — not into the configured one
+    other = os.path.join(tmp, "teamvault")
+    os.makedirs(os.path.join(other, "00-inbox"))
+    os.makedirs(os.path.join(other, "50-processes"))
+    with open(os.path.join(other, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write("# Brain — shared company knowledge vault\n\n**Vault mode: company**\n")
+    cfg3 = os.path.join(tmp, "cfg-team")
+    os.makedirs(cfg3)
+    with open(os.path.join(cfg3, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write(f"- Brain vault: {vault}\n")
+    r = subprocess.run([sys.executable, hook % "capture_check"],
+                       input=json.dumps({"cwd": os.path.join(other, "50-processes")}), capture_output=True,
+                       text=True, encoding="utf-8", errors="replace", env=dict(env, CLAUDE_CONFIG_DIR=cfg3))
+    if os.path.join(other, "00-inbox") not in reason(r.stdout) or inbox in reason(r.stdout):
+        return bad("hooks run", "a session inside another vault was asked to capture into the configured one")
 
     r = call("session_queue", {"reason": "clear", "cwd": vault, "session_id": "s1"})
     if r.returncode or "Traceback" in r.stderr:
@@ -462,6 +486,7 @@ if mode == "inject":                  # what a note smuggling instructions could
     pathlib.Path(".obsidian", "plugins", "evil").mkdir(parents=True, exist_ok=True)
     pathlib.Path(".obsidian", "plugins", "evil", "main.js").write_text("planted()", encoding="utf-8")
     pathlib.Path("30-knowledge", "tools.md").write_text("rewritten by the run\n", encoding="utf-8")
+    pathlib.Path("30-knowledge", "filed-by-the-run.md").write_text("a new note\n", encoding="utf-8")
     sys.exit(0)
 if mode == "nested-git":              # a repository of its own in a subfolder: its config runs on `git status`
     pathlib.Path("30-knowledge", "sub", ".git").mkdir(parents=True, exist_ok=True)
@@ -553,6 +578,12 @@ if mode == "link-obsidian":           # the whole .obsidian folder becomes a lin
     shutil.rmtree(".obsidian", ignore_errors=True)
     os.symlink(os.environ["FAKE_OUTSIDE"], ".obsidian")
     sys.exit(0)
+if mode == "fail-then-inject":        # the first try fails plainly, the retry plants code
+    if int(count.read_text()) % 2:
+        sys.exit(1)
+    with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
+        fh.write("\n# planted on the retry\n")
+    sys.exit(0)
 if mode == "inject-config":           # the quietest version: only git's config
     with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
         fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
@@ -609,6 +640,9 @@ def check_project_context(tmp):
         "# Decision: No PayPal at checkout\n\nFor [[Acme-Shop]]: card only.\n")
     put("40-decisions/2026-01-01-paypal-first.md", "---\ntype: decision\nstatus: deprecated\n---\n\n"
         "# Decision: PayPal first\n\nFor Acme-Shop.\n")
+    put("40-decisions/2026-01-04-card-only.md", "---\ntype: decision\nstatus: überholt\n---\n\n"
+        "# Decision: Acme-Shop takes cards only\n\n## Status\nSuperseded by [40-decisions/2026-01-05-no-paypal.md]"
+        "(40-decisions/2026-01-05-no-paypal.md)\n")
     put("40-decisions/2026-01-03-other-thing.md", "---\ntype: decision\n---\n\n# Decision: Other only\n\nFor [[Other]].\n")
     put("Deadlines.md", "\n- 2099-01-14 Acme-Shop launch\n- 2000-01-01 Acme-Shop kick-off\n"
         "- 2099-02-01 Other delivery\n- Acme-Shop notes → [[2099-03-01-acme-shop-plan]]\n")
@@ -635,7 +669,7 @@ def check_project_context(tmp):
     brief = ctx(os.path.join(work, "acme-shop-api", "src"))
     want = ["10-projects/Acme-Shop.md", "spare parts", "Fix the VAT rule", "2026-01-05-no-paypal.md",
             "2099-01-14", "which carrier", "who signs the hosting contract"]
-    unwanted = ["<template>", "paypal-first", "2000-01-01", "2099-02-01", "2099-03-01", "Other only"]
+    unwanted = ["<template>", "paypal-first", "card-only", "2000-01-01", "2099-02-01", "2099-03-01", "Other only"]
     if brief is None or [w for w in want if w not in brief] or [u for u in unwanted if u in brief]:
         return bad(label, f"brief in the project's repo is wrong: missing {[w for w in want if w not in (brief or '')]}, "
                           f"stray {[u for u in unwanted if u in (brief or '')]}")
@@ -720,6 +754,16 @@ def check_transcribe(tmp):
     exists = lambda rel: os.path.exists(os.path.join(vault, *rel.split("/")))
     if tr("--check").stdout.strip() != "engine: your command":
         return bad(label, "--check does not name the configured engine")
+    # every engine reads ffmpeg's WAV: without ffmpeg nothing is ready, and the
+    # tick must not be switched on to fail on every memo every 20 minutes
+    no_ff = {k: v for k, v in env.items() if k != "BRAINWARDEN_FFMPEG"}
+    no_ff["PATH"] = os.path.join(tmp, "no-ffmpeg-here")
+    os.makedirs(no_ff["PATH"], exist_ok=True)
+    c, on = tr("--check", env_=no_ff), tr("--auto", "on", env_=no_ff)
+    if c.returncode != 1 or "ffmpeg" not in c.stdout or on.returncode != 1 \
+            or exists(".tools/autoreview.json") and '"transcribe": true' in open(
+                os.path.join(vault, ".tools", "autoreview.json"), encoding="utf-8").read():
+        return bad(label, f"without ffmpeg it reported ready or switched on: {c.stdout.strip()!r}")
     audio("00-inbox/Neue Aufnahme.m4a", "Idee für Hotels in Tirol, zuerst die mit Kinderkino. Zweiter Satz.")
     audio("00-inbox/bad.ogg", "FAIL")
     audio("00-inbox/voice/quiet.opus", "SILENT")
@@ -823,14 +867,15 @@ def check_resurface(tmp):
     put("40-decisions/2020-01-01-why-shop.md", "# Why the shop\n\nBecause.\n")
     put("30-knowledge/Old-Backlink.md", "# Old backlink\n\nSee [[Week-Note]] once it exists.\n")
     put("30-knowledge/Unrelated.md", "# Unrelated\n\nNothing to do with it.\n")
+    put("30-knowledge/Über-Gold.md", "# Über Gold\n\nAn umlaut in the name: git quotes such paths.\n")
     commit("old notes", 400)
     put("30-knowledge/Fresh-Link.md", "# Fresh\n\nTouched recently.\n")
     commit("fresh", 10)
-    put("10-projects/Week-Note.md", "# Week note\n\nBuilt on [[2020-01-01-why-shop]] and [[Fresh-Link]].\n")
+    put("10-projects/Week-Note.md", "# Week note\n\nBuilt on [[2020-01-01-why-shop]], [[Über-Gold]] and [[Fresh-Link]].\n")
     put("00-inbox/2026-01-01-capture.md", "a capture mentioning [[Unrelated]]\n")
     commit("this week", 1)
     out = subprocess.run(search, cwd=vault, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-    want = ["40-decisions/2020-01-01-why-shop.md", "30-knowledge/Old-Backlink.md"]
+    want = ["40-decisions/2020-01-01-why-shop.md", "30-knowledge/Old-Backlink.md", "30-knowledge/Über-Gold.md"]
     stray = ["Unrelated", "Fresh-Link"]
     if [w for w in want if w not in out] or [s_ for s_ in stray if s_ in out]:
         return bad(label, f"wrong notes resurfaced: {out.strip()[:300]!r}")
@@ -880,6 +925,9 @@ def check_people(tmp):
         "- **Birthday:** not a person\n- **Acme GmbH** – supplier company\n"
         "- **Ein Praktikant** – helps out, name unknown\n"
         "- **Ben Carter** – also handles returns.\n")
+    # written by Windows Notepad: a BOM in front of the frontmatter
+    put("20-areas/Bom-Person.md", "\ufeff---\ntype: person\naliases: [Bobby Allot]\n---\n\n# Bom Person\n\n"
+        "Runs the allotment club.\n")
     put(f"00-inbox/{day(-2)}-shop-call.md", "Call about the Shop: Ben confirmed the forms. Peter brought the parcel. "
         "Mick joined.\nBrandt sent the invoice.\n")
     put(f"00-inbox/{day(-2)}-dinner.md", "Dinner with Ben and [[Jane-Doe]] after the team event.\n")
@@ -899,6 +947,9 @@ def check_people(tmp):
         return subprocess.run([sys.executable, script, *args], cwd=vault, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", env=dict(os.environ, **env_))
 
+    bom = pp("brief", "Bobby Allot")
+    if bom.returncode or "type: person" in bom.stdout:
+        return bad(label, "a BOM in front of the frontmatter hid it: aliases unread, frontmatter shown as text")
     shop = pp("who", "customs").stdout
     first = next((l for l in shop.splitlines() if l and not l.startswith(" ")), "")
     if not first.startswith("Ben Carter — in 30-knowledge/people/Shop-Team.md"):
@@ -1044,6 +1095,11 @@ def check_linkedin(tmp):
         outputs.append(r.stdout + r.stderr)
         return r
 
+    renamed = os.path.join(tmp, "my-linkedin-25-11-2026.zip")       # day first: no month 25
+    shutil.copy(zpath, renamed)
+    r = pp("linkedin", renamed)
+    if r.returncode or "Traceback" in r.stderr:
+        return bad(label, f"an export renamed with the day first crashed: {r.stderr.strip()[-120:]!r}")
     inv = pp("linkedin", folder).stdout
     if "6 connections · 3 you actually wrote with (both ways) · 1 of them quiet for 3+ years · 2 already in the brain" not in inv:
         return bad(label, f"inventory counts wrong (preamble, deactivated, group chat, recruiter, draft, sponsored): {inv[:300]!r}")
@@ -1166,6 +1222,11 @@ def check_autoreview(tmp):
     wrong = [str(on) for on, last, want in rhythm if mod.is_due(on, last, 5) != want]
     if wrong:
         return bad(label, f"is_due wrong on {wrong}")
+    quiet = [(3, 23, 7, True), (12, 23, 7, False), (23, 23, 7, True), (7, 23, 7, False),
+             (3, 0, 7, True), (11, 0, 7, False), (12, 24, 0, False)]
+    wrong = [q[:3] for q in quiet if mod.quiet_hours(*q[:3]) != q[3]]
+    if wrong:
+        return bad(label, f"quiet hours wrong for (hour, from, until) {wrong}")
 
     sh("git", "init", "-q")
     write("00-inbox/2026-01-01-thought.md", "a thought worth keeping\n")
@@ -1212,6 +1273,24 @@ def check_autoreview(tmp):
     r = ar("run", "--now", mode="fail")
     if r.returncode == 0 or calls() != 4:
         return bad(label, f"plain failure: {calls() - 2} calls (want 2: one retry)")
+
+    # 4b. ... and the scheduler does not try again the same day: a failure
+    #     retried on every 20-minute tick burns usage and fills the history
+    os.remove(os.path.join(vault, ".tools", "logs", "last-success"))      # due, whatever the weekday
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(dict(cfg, quiet_from=24, quiet_until=0), fh)            # no quiet hours, whatever the time
+    ar("run", mode="fail")
+    if calls() != 4:
+        return bad(label, f"a run that failed today was tried again by the scheduler ({calls() - 4} calls)")
+    last_run_file = os.path.join(vault, ".tools", "logs", "last-run.json")
+    with open(last_run_file, encoding="utf-8") as fh:
+        rec = json.load(fh)
+    with open(last_run_file, "w", encoding="utf-8") as fh:
+        json.dump(dict(rec, date="2000-01-01"), fh)                     # the failure was yesterday
+    if ar("run").returncode or calls() != 5:
+        return bad(label, f"the day after a failure the scheduler did not run ({calls() - 4} calls)")
+    with open(os.path.join(vault, ".tools", "autoreview.json"), "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
 
     # 5. the next success clears the notice
     if ar("run", "--now").returncode or exists("00-inbox/!Review failed.md"):
@@ -1298,12 +1377,22 @@ def check_autoreview(tmp):
             or exists("30-knowledge/planted/claude.md") \
             or exists(".mcp.json") or read(".obsidian/plugins/sync/data.json") != '{"last": 1}':
         return bad(label, f"a run that planted code was not rolled back (exit {r.returncode})")
+    # a NEW note is not undone by git reset: the next run would commit it as the week's work
+    kept = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(vault, ".git", "brainwarden-rolled-back"))
+            for f in fs if f == "filed-by-the-run.md"]
+    if exists("30-knowledge/filed-by-the-run.md") or not kept:
+        return bad(label, "a new note of a rolled-back run stayed in the vault (or was not kept aside)")
     if "rolled back" not in read("00-inbox/!Review failed.md") or "rolled back" not in log():
         return bad(label, "a rolled-back run left no notice")
 
     r = ar("run", "--now", mode="inject-config")
     if r.returncode != 3 or "planted-hooks" in read(".git/config"):
         return bad(label, f"a run that only redirected git hooks was not caught (exit {r.returncode})")
+
+    open(count, "w").close()                 # odd call fails, even call plants: start from zero
+    r = ar("run", "--now", mode="fail-then-inject")
+    if calls() != 2 or r.returncode != 3 or "planted on the retry" in read(".tools/hygiene.py"):
+        return bad(label, f"the retry was not checked like the first try (exit {r.returncode}, {calls()} calls)")
 
     r = ar("run", "--now", mode="nested-git")
     if r.returncode != 3 or exists("30-knowledge/sub/.git"):
@@ -2024,6 +2113,20 @@ def check_promise_not_to_overwrite(tmp):
             broken.append(f"{rel} was OVERWRITTEN")
     if broken:
         return bad("assemble keeps its no-overwrite promise", "; ".join(broken))
+    # ... and protecting what was there must not stop the overlays from
+    # replacing the core files this same run just copied: a company vault
+    # adopted from a folder of notes got the PERSONAL rules file
+    folder = os.path.join(tmp, "notes-only")
+    os.makedirs(folder)
+    with open(os.path.join(folder, "mynote.md"), "w", encoding="utf-8") as fh:
+        fh.write("my own note\n")
+    out = subprocess.run([sys.executable, os.path.join(ROOT, "assemble.py"), folder, "company"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
+    head = open(os.path.join(folder, "CLAUDE.md"), encoding="utf-8").readline()
+    if "company" not in head.lower() or "left untouched" in out \
+            or open(os.path.join(folder, "mynote.md"), encoding="utf-8").read() != "my own note\n":
+        return bad("assemble keeps its no-overwrite promise",
+                   f"on a folder with notes, the overlays did not replace the core: {head.strip()!r}")
     ok("assemble keeps its no-overwrite promise")
 
 
@@ -2059,6 +2162,11 @@ def check_translated_company(tmp):
             return bad("progress.py counts the same in any language",
                        f"{label}: cannot read its own summary back")
         out[label] = m.groups()
+        # called by path from somewhere else, as the runbook and the review skill do
+        away = run([os.path.join(vault, ".tools", "progress.py")], cwd=tmp)
+        if NUMBERS.search(away.stdout) is None or NUMBERS.search(away.stdout).groups() != m.groups():
+            return bad("progress.py counts the same in any language",
+                       f"{label}: started from another folder it measured that folder, not its vault")
     if out["en"] != out["de"]:
         return bad("progress.py counts the same in any language",
                    f"english {out['en']} vs translated {out['de']}")
@@ -2083,6 +2191,29 @@ def check_mode_guard(tmp):
     ok("unset {{MODE}} is reported")
 
 
+def check_moc_name(tmp):
+    """A map of content is a signpost by its name too — "MOC Gold" and
+    "Gold MOC" alike (the `.md` used to stick to the last word)."""
+    label = "a MOC named at the end is a signpost"
+    vault = os.path.join(tmp, "mocvault")
+    assemble(vault, "personal")
+    set_mode(vault, "personal")
+    fm = "---\ntype: knowledge\ntitle: {t}\ncreated: 2026-01-01\ntags: [gold]\n---\n\n"
+    for rel, title, body in (("30-knowledge/Gold MOC.md", "Gold MOC", "The map: [[Gold price]] and why it moves.\n"),
+                             ("30-knowledge/Gold price.md", "Gold price", "What sets it, in my words, with a source "
+                              "and one case worth remembering for later reviews. [[Gold MOC]]\n")):
+        with open(os.path.join(vault, *rel.split("/")), "w", encoding="utf-8") as fh:
+            fh.write(fm.format(t=title) + f"# {title}\n\n{body}")
+    try:
+        _, counts = hygiene_findings(vault)
+    except RuntimeError as e:
+        return bad(label, str(e)[:120])
+    unreachable = next((n for t, n in counts.items() if t.startswith("not reachable")), None)
+    if unreachable != 0:
+        return bad(label, f"a note linked only from 'Gold MOC.md' counted as unreachable ({unreachable})")
+    ok(label)
+
+
 def main():
     check_compiles()
     check_search()
@@ -2105,6 +2236,7 @@ def main():
         check_translated_vault(tmp)
         check_translated_company(tmp)
         check_promise_not_to_overwrite(tmp)
+        check_moc_name(tmp)
         for mode in MODES:
             check_mode(mode, tmp)
     print()

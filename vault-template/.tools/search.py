@@ -389,7 +389,9 @@ def last_changes(root):
     file times lie (a fresh clone sets every one of them to today)."""
     import subprocess
     try:
-        out = subprocess.run(["git", "-C", root, "log", "--format=@%as", "--name-only", "--no-renames"],
+        # quotePath=false: otherwise git prints "\303\234ber.md" for Über.md, and no note matches
+        out = subprocess.run(["git", "-C", root, "-c", "core.quotePath=false", "log", "--format=@%as",
+                              "--name-only", "--no-renames"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=30).stdout
     except Exception:
@@ -399,7 +401,7 @@ def last_changes(root):
         if line.startswith("@"):
             day = line[1:]
         elif line.strip() and day:
-            seen.setdefault(line.strip().strip('"'), day)
+            seen.setdefault(unicodedata.normalize("NFC", line.strip().strip('"')), day)
     return seen
 
 
@@ -416,7 +418,8 @@ def resurface(root, k=3, days=7, quiet=60):
         return 1
     changed = last_changes(root)
     today = datetime.date.today()
-    age = lambda rel: (today - datetime.date.fromisoformat(changed[rel])).days if rel in changed else None
+    nfc = lambda rel: unicodedata.normalize("NFC", rel)     # macOS may hand out either form of an umlaut
+    age = lambda rel: (today - datetime.date.fromisoformat(changed[nfc(rel)])).days if nfc(rel) in changed else None
     notes = {rel.replace(os.sep, "/"): path for path, rel in walk_notes(root)}
     by_stem = {}
     for rel in notes:
