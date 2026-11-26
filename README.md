@@ -199,7 +199,7 @@ your vault alive, you don't need this. If you want an AI to write your
 thinking for you, this kit will refuse. If you need real access control
 inside one company vault, this kit has none: separation means a separate
 vault. And if you want maximum features, look elsewhere; this is
-deliberately five skills and three small scripts.
+deliberately five skills and seven small scripts.
 
 <details>
 <summary><b>What's inside</b> — the repo, folder by folder</summary>
@@ -208,7 +208,7 @@ deliberately five skills and three small scripts.
 
 | Path | Contents |
 |---|---|
-| [`vault-template/`](vault-template/) | The vault core: folders, signposts, rules, `Home` dashboard, note templates, `.tools/` (search, hygiene, harvest) |
+| [`vault-template/`](vault-template/) | The vault core: folders, signposts, rules, `Home` dashboard, note templates, `.tools/` (search, hygiene, harvest, people, exam, transcribe, the unattended review) |
 | [`vault-template/modules/`](vault-template/modules/) | Overlays copied on top for a work or company vault |
 | [`skills/`](skills/) | The five skills: capture · ingest · ask · review · research |
 | [`hooks/`](hooks/) | Optional: a net that catches what you forgot to capture |
@@ -234,12 +234,15 @@ brain gets its own configuration directory (`~/.claude-work`, with its own
 copy of skills and rules), which is what keeps work or company content out
 of your private sessions.
 
-The kit makes no network calls, has no telemetry, and logs nobody's
-searches. What Claude sends to Anthropic is governed by your Claude Code
+The kit makes no network calls of its own beyond two: the unattended
+review checks that api.anthropic.com is reachable before it starts, and a
+speech engine downloads its model on first use. It has no telemetry and
+logs nobody's searches. What Claude sends to Anthropic is governed by your Claude Code
 settings, not by this kit. Web research and the setup's optional computer
 scan run only with your explicit consent. In a company vault,
 `confidentiality:` is a label and not access control. Uninstalling is three
-deletions, a few more with a second brain: [SECURITY.md](SECURITY.md).
+deletions (after `autoreview.py uninstall` if you scheduled the review), a
+few more with a second brain: [SECURITY.md](SECURITY.md).
 
 </details>
 

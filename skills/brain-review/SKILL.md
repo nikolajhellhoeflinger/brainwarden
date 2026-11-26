@@ -206,5 +206,8 @@ the step-1 empty-file rule still wins (empty = delete + report). (2) Never archi
 list candidates as questions. (3) Route ALL questions to Home's `block:open-questions`, never to
 chat, including step 2's "3 most important things" and step 8's "what are you working on next". (4)
 Step 8 still runs: name what the brain can do now and list the artifact you would build, as an offer
-instead of building it. (5) Finish with the Home refresh, `git commit`, and a short report to
-`<vault>/.tools/logs/auto-review-YYYY-MM-DD.md` — one per run, outside the notes; keep the last ~12.
+instead of building it. (5) Finish with the Home refresh and a short report as your final answer.
+Started by `autoreview.py` (its prompt says it commits before and after you): run no git — it writes
+that answer to `<vault>/.tools/logs/autoreview-YYYY-MM-DD.log` (outside the notes; it keeps the last
+12) and commits the run's work itself. Started by any other scheduler (a Desktop routine): end with
+the commit of step 9, as in a normal review.

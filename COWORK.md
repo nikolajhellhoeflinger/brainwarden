@@ -12,8 +12,8 @@ does not, and what to do instead.
 > document in the kit addressed to the colleagues who just read the vault,
 > and it lives in the kit repo, which the setup tells you that you may
 > delete. Step 7b of `SETUP-FOR-CLAUDE.md` copies it to
-> `<vault>/.tools/COWORK.md` (not the vault root — a kit document there
-> turns three `hygiene.py` rubrics red) and sends it on. If your vault's
+> `<vault>/.tools/COWORK.md` (not the vault root — there every search
+> would rank it among the notes) and sends it on. If your vault's
 > notes are not in English, translate the instruction block in step 3
 > below before you hand it over: it is the one page those colleagues are
 > asked to read, and handing it over in a language the rest of the vault

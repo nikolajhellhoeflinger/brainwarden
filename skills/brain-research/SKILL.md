@@ -77,7 +77,8 @@ company facts, never private details about employees.
 - **Before a note's content goes into a web query or any outside request:**
   check `ai_release:`. `local` means the content stays in this conversation —
   research the topic in general terms instead, and say that you narrowed the
-  question on purpose. `confidentiality: restricted` is treated the same way.
+  question on purpose. `confidentiality: strict` (`restricted` in a company
+  vault) is treated the same way.
 
 - The human's own words always outrank researched claims.
 - Never research beyond the vault's purpose — this enriches THEIR brain,

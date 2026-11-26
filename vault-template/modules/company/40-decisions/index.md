@@ -7,7 +7,8 @@ this?" without asking the person who decided it.
 **Rules here:** append-only. A record is NEVER rewritten and never
 deleted: if it turns out wrong, write a new record and link both files
 in plain text (`Supersedes [path]` in the new one, `Superseded by
-[path]` + `status: deprecated` appended to the old) — an agent landing
+[path]` appended to the old, whose frontmatter gets `status:
+deprecated`) — an agent landing
 in the outdated record has to find the pointer THERE. File names
 `YYYY-MM-DD-slug.md`. Name the deciding `owner:` role, not only a
 person. Terse is correct here.

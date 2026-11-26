@@ -20,7 +20,13 @@ the brain, because nobody said "capture:". This hook is the net under that.
 written there recently? If yes, it stays silent. If no, it makes Claude
 check the five capture triggers once — a decision, a date, a milestone, a
 new person, a lesson learned the hard way — and capture what is worth
-keeping. It never writes into the vault itself.
+keeping. It never writes into the vault itself. Which vault: the one the
+session runs IN (the folder, or one above it, that has an inbox, the
+kit's `.tools/` and a `CLAUDE.md` naming its mode — `personal`,
+`professional` or `company`; a code repository whose rules file merely
+says "Mode:" never counts); elsewhere the `Brain vault:` line in
+`<config>/CLAUDE.md` — read bold or in backticks too — and `~/Brain`
+when there is none.
 
 **It gets quieter on its own.** A reminder on a fixed timer is a nagger, and
 naggers get switched off — so this one keeps score, and the score sets the
@@ -78,7 +84,9 @@ stays with the model in front of you, which has the actual context.
 the vault's own tools already require — so the script behaves identically on
 macOS, Linux and Windows. The `~/.claude/...` in the install snippet is a
 shell convention, not part of the path: where it is not expanded (Windows
-shells generally do not), write the path out in full.
+shells generally do not), write the path out in full. A second brain uses
+its own configuration directory (`CLAUDE_CONFIG_DIR`, e.g.
+`~/.claude-work`): file, `settings.json` entry and path go there instead.
 
 **Tuning:** `BRAINWARDEN_CAPTURE_WINDOW` (minutes, default 240) sets the
 *base* interval that the ladder moves around. `BRAINWARDEN_CAPTURE_CHECK=off`

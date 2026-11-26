@@ -77,10 +77,10 @@ root `index.md`, and every later session reads it from there.
 | Folders | `00,10,20,30(+people),40,90` | the same **+ `50-processes/` + `60-contribution/`** | `00,30,40,50,60,70,80,90` — **no** projects/areas, **no** `people/` |
 | Self page | `About me.md` | `About me.md` | `About this vault.md` |
 | First win | first project + dates | + first workflow | first SOP + the role that owns it |
-| Frontmatter | base schema | base **+ `status:` + `ownership:`/`confidentiality:`** | base + `status:` + `owner:`/`audience:`/`confidentiality:`/`review_due:` |
+| Frontmatter | base schema | base **+ `ownership:`** (the one required field; `status:`/`confidentiality:` recommended) | base + `status:` + `owner:`/`audience:`/`confidentiality:`/`review_due:` |
 | Interview | person track | person track, work only | process track (Step 8) |
 | Who writes | the human | the human | anyone; published after approval |
-| Modules 50–80 | free for their own | `50` taken, `60–80` free | all taken — no user modules |
+| Modules 50–80 | free for their own | `50` and `60` taken, `70–80` free | all taken — no user modules |
 
 `30-knowledge/people/` exists only in `personal` and `professional`. A
 company vault gets `60-roles/` instead: role descriptions, not dossiers on
@@ -249,17 +249,18 @@ Linux and Windows, where `cp -R`, quoting and `rm -rf` do not.
 existed before you ran it are kept and listed at the end. (The overlays
 DO replace core files the script itself just copied a moment earlier —
 that is the next paragraph, and a different thing entirely.)
-That makes a wrong path a non-event rather than a catastrophe — but it is
-NOT the adopt path: for an existing vault, follow 3c, which has steps a
-copy tool cannot do (folding their `Home.md` into the new one by hand).
+That makes a wrong path a non-event rather than a catastrophe. An
+existing vault still goes through 3c: the copy is the same command, but
+3c has steps no copy tool can do (folding their `Home.md` into the new
+one by hand).
 
 Two things to check in its output before moving on: the mode it reports
 matches what they asked for, and the "existing files left untouched" list
 is empty on a fresh install. If it is not, you are not on a fresh
 install — stop and switch to 3c.
 
-The order it applies internally matters: the company overlay deliberately OVERWRITES thirteen core
-files. **Nine of them are signposts and rules** — six `index.md` (root,
+The order it applies internally matters: the company overlay deliberately OVERWRITES thirteen
+files — twelve from the core, plus `sop-note.md` from the processes overlay. **Nine of them are signposts and rules** — six `index.md` (root,
 `00-inbox/`, `30-knowledge/`, `40-decisions/`, `90-archive/`,
 `_templates/`), `Home.md`, `Deadlines.md`
 and **`CLAUDE.md`** — because they describe a vault that does not exist
@@ -291,32 +292,26 @@ not merely left unused: a person-dossier template in a vault whose rule
 is "roles, never people" is a trap.
 
 ### 3c. Adopting an existing vault — add only what is missing
-**Never run the 3b copy over an existing vault.** `cp -R` silently
-overwrites files they may already have (their own `Home.md`,
-`About me.md` …). Use the never-overwrite copy:
+**Never copy the template over an existing vault by hand.** `cp -R`
+silently overwrites files they may already have (their own `Home.md`,
+`About me.md`, a filled-in `index.md` …). The copy here is the same
+command as in 3b:
 
-    cd vault-template && cp -Rn . <vault>/
+    <python> assemble.py <vault> <mode>
 
-**A non-zero exit code is expected here and means nothing is wrong.**
-`-n` skips every file that already exists, and macOS BSD `cp` returns a
-non-zero status when it skips. That is the safety net doing its job:
-- **NEVER retry without `-n`**, and never "fix" it with `-f` or `-R` alone
-  — that is precisely the command that overwrites their notes.
-- Read the list of skipped files as information: those are the files they
-  already had.
-- Then verify that nothing of theirs changed (`cd <vault> && git status`
-  if it is a Git repo, otherwise spot-check their `Home.md` and one of
-  their own notes) before going on.
+It adds what is missing, applies the mode's overlays to what it just
+copied, and never touches a file that was there before it ran — those
+are listed at the end. Read that list as information: those are the files
+they already had, every one of them still theirs, byte for byte. Then
+verify that nothing of theirs changed (`cd <vault> && git status` if it
+is a Git repo, otherwise spot-check their `Home.md` and one of their own
+notes) before going on.
 
-The mode overlays (`modules/processes/`, `modules/company/`) are kit infrastructure, not
-their content — apply them with plain `cp -R` even here, with one
-precaution: the company overlay also carries the two CONTENT files
-`Home.md` and `About this vault.md`. If either already exists in their
-vault, move it aside first (`mv "<vault>/Home.md" "<vault>/Home.mine.md"`),
-apply the overlay, then restore theirs and fold the template's parts into
-it by hand (see the Home bullet below) — a `cp -R` would otherwise
-overwrite a page they wrote. `rm -rf <vault>/modules` still applies; the
-deletions from the company drop list do NOT (see the last bullet below) — `assemble.py` refuses to delete anything in a folder that already had content, and prints what it left standing.
+What it cannot do is yours, by hand: fold the template's parts into a
+file of theirs that it left standing (the `Home.md` bullet below), and
+clean up. On a folder that already had content it deletes nothing — not
+even the paths a company vault must not carry; it prints those instead
+(see the last bullet below).
 
 The rest of adopting:
 - Scan their existing folder structure and map it onto the rules of this
@@ -330,7 +325,7 @@ The rest of adopting:
   through it), and point out that capture now writes to `00-inbox/` —
   note any pre-existing inbox file of theirs for merging at the first
   review.
-- **If they already had a `Home.md`,** `cp -n` correctly skipped the
+- **If they already had a `Home.md`,** `assemble.py` correctly skipped the
   template — but the skills need its four dashboard blocks. Copy the
   four marker pairs from `vault-template/Home.md` into THEIR Home
   (`<!-- block:right-now -->` … `<!-- /block:right-now -->`, then
@@ -343,18 +338,18 @@ The rest of adopting:
   not use it (3d). Leave it, and note it under Home's "Open questions".
 - **`company`: check which `CLAUDE.md` you ended up with.**
   `head -1 <vault>/CLAUDE.md` must say *shared company knowledge vault* —
-  if it says *personal knowledge vault*, `cp -Rn` kept the core file and
-  the binding rules now describe projects, areas and person notes that do
-  not exist here. `hygiene.py` must report `mode: company`. Copy the
+  if it does not, it is the rules file they already had, which
+  `assemble.py` kept, and the binding rules now describe a vault that is
+  not this one. `hygiene.py` must report `mode: company`. Copy the
   company versions of `CLAUDE.md`, `Home.md`, `Deadlines.md` and the six
   `index.md` (root, `00-inbox/`, `30-knowledge/`, `40-decisions/`,
   `90-archive/`, `_templates/`) over by hand, one OK per file.
-- **`company`: the four note templates too.** `cp -Rn` keeps whatever
-  was already there, so an adopted vault ends up with the CORE
-  `_templates/knowledge-note.md`, `source-note.md`, `sop-note.md` and
-  `40-decisions/_template.md` — which carry `ownership: private` and none
-  of this mode's four required fields, so every note built from them
-  lands in `hygiene.py`'s **frontmatter gaps**. Copy the company versions
+- **`company`: the four note templates too.** `assemble.py` keeps
+  whatever was already there, so a vault that had its own
+  `_templates/knowledge-note.md`, `source-note.md`, `sop-note.md` or
+  `40-decisions/_template.md` keeps those — and unless they carry this
+  mode's four required fields, every note built from them lands in
+  `hygiene.py`'s **frontmatter gaps**. Copy the company versions
   over these four as well. Templates are kit infrastructure, not their
   content: if they edited one themselves, diff and port their changes
   rather than overwriting blind.
@@ -435,16 +430,11 @@ the lie this system exists to prevent.
 On the fresh path (3b), `assemble.py` already put two things into
 `<vault>/.tools/` that are needed AFTER the setup, when the cloned repo is
 usually gone: `INTERVIEW.md` (the deep interview is meant to happen weeks
-later) and `hooks/` (three files, offered in Step 8c as something to come
+later) and `hooks/` (the three hooks and their README, offered in Step 8c as something to come
 back for, not to install now). It prints them under "kept for later" — no
 command of your own needed there.
 
-**On the adopt path (3c) they are missing** — `cp -Rn` does not bring
-them, because they do not live in `vault-template/`. Copy them yourself
-before you go on, or 3f, 8b and 8c all point at files that are not there:
-
-    cp INTERVIEW.md <vault>/.tools/
-    cp -R hooks <vault>/.tools/hooks
+The adopt path (3c) runs the same script, so they are there too.
 
 `.tools/` is kit infrastructure, not vault content: it is excluded from
 search and from the placeholder check in Step 9. Never edit those copies,
@@ -584,7 +574,8 @@ would otherwise answer differently):
   partner and decision notes get NO maturity — they are not "thin", they
   are current or outdated, and that is what `status:` is for.
 - **`status: draft | stable | deprecated`** on every note outside
-  `00-inbox/` from `professional` upwards; in `company` mode plus
+  `00-inbox/` from `professional` upwards (recommended there; `hygiene.py`
+  requires only `ownership:` in `professional`); in `company` mode plus
   `owner:`, `audience:`, `confidentiality:` and `review_due:` (default:
   today + 12 months — say that you set it).
 - File names kebab-case, no spaces, no umlauts; the CONTENT is in their
@@ -742,8 +733,8 @@ the English one, so this promise is now enforced rather than asserted.
 
    It lists every file still carrying an unfilled `<…>` field, counts
    them, and goes to zero when you have answered them. On a fresh company
-   vault it reports **10 open gaps in 4 files (9 unfilled `<…>` fields,
-   1 marked TO FILL IN)**. If your run shows more, you have notes of your
+   vault it reports **11 open gaps in 4 files (9 unfilled `<…>` fields,
+   2 marked TO FILL IN)**. If your run shows more, you have notes of your
    own with fields left open; if it shows fewer, someone answered some
    already. Command examples in backticks (`search.py <terms>`) and the
    note templates are deliberately not counted.
@@ -837,10 +828,11 @@ the English one, so this promise is now enforced rather than asserted.
    very next morning. That file is how a colleague tells a fresh copy from
    a six-month-old one — left as `{{DATE}}`, it answers the one question
    it exists for with a placeholder.
-   That file also carries one `TO FILL IN (IT / knowledge owner)` line —
-   how copies are actually distributed. Leave it standing if that is not
-   decided yet, say so out loud, and put it under Home's open questions;
-   `progress.py` counts it as an open gap until someone answers it. **Never fill the `{{DATE}}`/`{{NAME}}` tokens inside the
+   That file also carries two `TO FILL IN` lines — how copies are
+   actually distributed, and where a finished suggestion goes (Step 7a).
+   Leave them standing if that is not
+   decided yet, say so out loud, and put them under Home's open questions;
+   `progress.py` counts each as an open gap until someone answers it. **Never fill the `{{DATE}}`/`{{NAME}}` tokens inside the
    template files** (`_templates/`, `40-decisions/_template.md`) or
    anywhere in `.tools/` — the templates are filled per note, at creation
    time, forever, and `.tools/` is tooling, not content. Translating the
@@ -988,13 +980,12 @@ questions. Two things you must do rather than assume:
   and send it to them. It lives in the kit repo, and you are about to
   tell the human they may delete that repo. Do not leave the only
   instructions for eleven of twelve people inside a folder that is about
-  to disappear. **`.tools/` and not the vault root**: measured — a
-  `COWORK.md` in the root turns three `hygiene.py` rubrics red at once
-  (`orphans`, `not reachable from a signpost`, `frontmatter gaps`),
-  because it is a kit document and has no note frontmatter, and Step 9
-  requires all of them to be `0`. `.tools/` is excluded from search,
-  from hygiene and from the placeholder check, which is exactly what a
-  kit document needs.
+  to disappear. **`.tools/` and not the vault root**: measured — in the
+  root `hygiene.py` stays at `0` (every root file counts as a kit page),
+  but `search.py` ranks it among the notes (a search for its topic puts
+  it first) and Obsidian lists it next to `Home.md`. `.tools/` is
+  excluded from search, from hygiene and from the placeholder check, and
+  Obsidian hides it, which is exactly what a kit document needs.
 - **Translate the instruction block in its step 3** into the vault
   language before handing it over, and paste the vault's own path into
   it. It is the block those colleagues copy verbatim into Cowork; in an
@@ -1089,8 +1080,9 @@ not about them:
   is the one that still exists later) — start with its Phase-0 consent
   question, then follow the track for this mode (person track for
   `personal`/`professional`, process track for `company`), in the vault
-  language. Style models: `examples/`. Afterwards refresh `Home.md` and
-  the waypoints, then commit.
+  language. Style models: the repo's `examples/` (gone once the repo is
+  deleted — then the vault's `_templates/`). Afterwards refresh
+  `Home.md` and the waypoints, then commit.
 - **Later:** write one note to `00-inbox/` ("run the onboarding interview
   — say: *interview me for my brain* — script: `.tools/INTERVIEW.md`")
   and list it under Home's "Open questions". Never pressure — the
@@ -1104,12 +1096,14 @@ a dirty tree.
 
 Capture is a habit, and habits lapse. Two days pass, decisions get made,
 a deadline is named, and none of it reaches the brain because nobody said
-"capture:". `<vault>/.tools/hooks/` holds two optional Claude Code hooks for
-exactly that (`assemble.py` put them there, so they are still around when
+"capture:". `<vault>/.tools/hooks/` holds three optional Claude Code hooks
+(`assemble.py` put them there, so they are still around when
 the cloned repo is not): one checks at the end of a turn whether anything has
 reached the inbox lately and, if not, makes Claude check the five capture
-triggers once; the other writes one line per session end so the weekly
-review can ask about sessions it never saw.
+triggers once; one writes one line per session end so the weekly
+review can ask about sessions it never saw; and `project_context.py`, at
+the start of a session in a project's code folder, hands Claude a short
+brief of what the brain knows about that project.
 
 **Say they exist, in one sentence, and point at
 `<vault>/.tools/hooks/README.md`.** Do
@@ -1268,7 +1262,7 @@ sentence on how to extend later: "Ask me to add a module, rename an area,
 or change the language — the structure grows with you." Optional extra to
 mention (don't set it up unasked): "I can also schedule the weekly review
 to run itself — ask me any time; it writes what it did to
-`<vault>/.tools/logs/auto-review-YYYY-MM-DD.md`, and the auto-review
+`<vault>/.tools/logs/autoreview-YYYY-MM-DD.log`, and the auto-review
 entry in TROUBLESHOOTING.md has the usage-cost trade-offs first." If
 they say yes later: `python3 <vault>/.tools/autoreview.py install` (it
 refuses a company vault unless the person confirms with `--force`).
@@ -1296,8 +1290,11 @@ KEYS — never note content:
    person's content is `personal` unless they say otherwise — say which
    you assumed. Changing mode never deletes folders: if they now want a
    work brain, build the second vault fresh (Steps 3–9); if an existing
-   vault becomes `professional`, apply only the processes overlay —
-   `cp -R vault-template/modules/processes/. <vault>/` — and nothing else.
+   vault becomes `professional`, run `<python> assemble.py <vault>
+   professional`: it adds the two new folders and their files and leaves
+   every file already there untouched, their filled-in root `index.md`
+   included — so add the `50-processes/` and `60-contribution/` lines to
+   that one by hand.
 3. **Skills:** replace the old `brain-*` folders in `~/.claude/skills/`
    with the current five from `skills/`. If their skills were
    personalized (translated, custom paths), diff first and port the new

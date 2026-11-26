@@ -13,7 +13,7 @@ asks the one question the machine cannot answer: "what came out of this?"
 
 What it deliberately does NOT do:
 
-  - It does not read the transcript, and since v1.4 it does not even write
+  - It does not read the transcript, and it does not even write
     down where the transcript IS. The path was in the file for a while and
     nothing ever read it — a pointer to everything that was said, kept for
     no purpose, is exactly the thing this hook promises not to keep. The

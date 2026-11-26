@@ -228,7 +228,7 @@ def read_state():
             parsed = True
         except ValueError:
             continue
-    if not parsed:                      # pre-1.4 marker file: one bare epoch
+    if not parsed:                      # older marker file: one bare epoch
         try:
             st["last"] = float(raw.strip())
         except ValueError:

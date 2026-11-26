@@ -14,8 +14,8 @@ __pycache__/
 .tools/logs/scheduler.log
 .tools/review-exclude.txt
 # Other people's data never enters the history: a LinkedIn or address-book
-# export stays OUTSIDE the vault (people.py refuses one inside it), and if
-# one lands here by mistake, git does not pick it up.
+# export stays OUTSIDE the vault (people.py refuses a LinkedIn export
+# inside it), and if one lands here by mistake, git does not pick it up.
 *LinkedInDataExport*
 Connections.csv
 messages.csv

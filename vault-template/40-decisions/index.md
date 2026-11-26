@@ -6,7 +6,8 @@ and what was rejected.
 **Rules here:** append-only. A decision record is NEVER rewritten and
 never deleted: if it turns out wrong, write a new record and link both
 files to each other in plain text (`Supersedes [path]` in the new one,
-`Superseded by [path]` appended to the old one) — an agent that lands in
+`Superseded by [path]` appended to the old one, whose frontmatter also
+gets `status: deprecated`) — an agent that lands in
 the outdated record has to find the pointer THERE. File names
 `YYYY-MM-DD-slug.md`, date first, so the folder sorts chronologically.
 Terse is correct here; length is not a virtue.

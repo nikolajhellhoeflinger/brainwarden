@@ -1,14 +1,22 @@
 # Security
 
 Brainwarden is a local-only kit: Markdown files, five Claude Code skills
-and a few Python scripts: `search.py`, `hygiene.py` and `harvest.py` in
-every vault, `progress.py` additionally in a company one, plus two
-OPT-IN hooks (`capture_check.py`, `session_queue.py`) that are copied
+and seven Python scripts in every vault's `.tools/` (`autoreview.py`,
+`exam.py`, `harvest.py`, `hygiene.py`, `people.py`, `search.py`,
+`transcribe.py`), `progress.py` additionally in a company one, plus three
+OPT-IN hooks (`capture_check.py`, `session_queue.py`,
+`project_context.py`) that are copied
 into `<vault>/.tools/hooks/` but never run until you add an entry to your
-own `settings.json` yourself. There is no server, no
-telemetry, no network call of its own — the only things it writes are your
-vault, your skills folder (`~/.claude/skills/`) and one opt-in block in
-`~/.claude/CLAUDE.md`. Run a second brain alongside the first and it adds
+own `settings.json` yourself. There is no server and no telemetry. The
+tools open no network connection except two: before an unattended review
+`autoreview.py` checks that https://api.anthropic.com/ is reachable (and
+then starts the `claude` CLI), and a speech engine downloads its model the
+first time `transcribe.py` uses it. Besides your vault it writes only your
+skills folder (`~/.claude/skills/`), one opt-in block in
+`~/.claude/CLAUDE.md` and — only if you opt in — the scheduler entry
+`autoreview.py install` creates (LaunchAgent / Windows task / systemd
+timer) and the hooks' state files under `<config>/state/brainwarden-*`.
+Run a second brain alongside the first and it adds
 one more vault folder and one more config directory (`~/.claude-work`),
 nothing else.
 
@@ -22,7 +30,8 @@ Things worth knowing:
   by this kit.
 - **Everything is reversible:** the vault is Git-versioned from the first
   commit, and [TROUBLESHOOTING.md](TROUBLESHOOTING.md) documents the full
-  uninstall — three deletions for one brain, plus the second vault,
+  uninstall — `autoreview.py uninstall` first if you scheduled the review,
+  then three deletions for one brain, plus the second vault,
   its config directory and its shell alias if you set one up.
 
 ## Reporting a vulnerability

@@ -11,8 +11,9 @@ file conflicts and corrupted vaults. For your phone: Obsidian Sync.
 
 **Can my brain be in German (or any language)?** Yes — the repo is
 English, but during setup Claude asks for your vault language and writes
-(and translates the starter pages) accordingly. Only folder names stay
-English so the skills keep working.
+(and translates the starter pages) accordingly. Folder names may be
+translated too: the tools find folders by their number (`00-`, `40-`,
+`90-`), not by the English word.
 
 **Inbox overflowing?** That's what the weekly ritual is for: "brain
 review" — Claude processes the inbox to zero. Second brains die of full
@@ -97,8 +98,10 @@ automatically. Vaults built before those existed simply lack them — say
 *"backfill the missing index files in my brain"*. Folders you created by
 hand need the pair too; without it, agents guess, and guessing is what
 this system exists to prevent. Run from inside your vault,
-`python3 .tools/hygiene.py` lists notes that no `index.md` mentions — and
-everything else the weekly review checks. **On Windows write `py -3`
+`python3 .tools/hygiene.py` lists folders with notes but no `index.md`
+and notes no signpost leads to — plus orphans, dead links, near-empty
+notes, frontmatter gaps, expired dates, one-sided supersede chains,
+unclosed code fences and portability problems. **On Windows write `py -3`
 instead of `python3`**, here and everywhere else on this page.
 
 **Why do the folder numbers jump (…40, then 90)?** The gap is expansion
@@ -116,9 +119,10 @@ onboarding and partners instead. Each folder explains itself in its own
 `index.md`.
 
 **Can I rename folders?** Area folders are named after YOUR life —
-Claude creates them with your words during setup. Keep the numbered
-top-level scheme (stable sorting) and the English top-level names (the
-skills depend on them).
+Claude creates them with your words during setup. Top-level folders may
+be renamed or translated too — keep their numbers (`00-` … `90-`): the
+tools find the inbox, the decisions folder and the archive by number.
+Only `CLAUDE.md`, `index.md` and `Home.md` keep their names.
 
 **What does NOT belong in the brain?** Operational knowledge of active
 code projects (belongs in that repo's CLAUDE.md) and anything you call
@@ -145,11 +149,18 @@ https://github.com/nikolajhellhoeflinger/brainwarden — follow the Updating
 section in SETUP-FOR-CLAUDE.md."* Your notes are never touched; updates
 only replace skills, the search tool and the dashboard scaffolding.
 
-**How do I uninstall completely?** Three things and you're clean:
+**How do I uninstall completely?** Scheduled the unattended review? Then
+first, inside the vault, `python3 .tools/autoreview.py uninstall`
+(Windows: `py -3`): it removes the scheduler entry it created
+(LaunchAgent / Windows task / systemd timer), which would otherwise
+outlive the vault. Then three things and you're clean:
 `rm -rf ~/Brain` (PowerShell: `Remove-Item -Recurse -Force ~\Brain`; or
 keep it — it's just Markdown), delete the five
 `brain-*` folders from `~/.claude/skills/`, and remove the "Brain" block
-from `~/.claude/CLAUDE.md`. Nothing else was touched. Have a second
+from `~/.claude/CLAUDE.md`. A hook you installed: delete its file and
+its `settings.json` entry; hooks leave state files under
+`~/.claude/state/brainwarden-*`, safe to delete. Nothing else was
+touched. Have a second
 brain? Then also `rm -rf` its vault folder and its configuration
 directory (`~/.claude-work`), and delete the `alias workbrain=…` line
 from your shell profile (`~/.zshrc` or `~/.bashrc`).
@@ -170,13 +181,14 @@ it's opt-in, and you should know the trade-offs first:
   follows the review skill's autonomous rules: it deletes nothing
   uncertain, archives nothing unasked, and parks every question in Home's
   "Open questions" block instead of a chat you'll never see.
-- **It writes down what it did.** Each unattended run appends a short
-  report to `<your vault>/.tools/logs/auto-review-YYYY-MM-DD.md` — one
-  file per run: what it filed, what it left alone, what it wants to ask
+- **It writes down what it did.** Each unattended run logs to
+  `<your vault>/.tools/logs/autoreview-YYYY-MM-DD.log` — one file per
+  day: the runner's own lines plus the model's closing report, what it
+  filed, what it left alone, what it wants to ask
   you. That folder is tooling, not notes: it stays out of search results
   and out of your Obsidian graph, and you can read it any time or delete
   it without losing anything (the Git history holds the same story).
-  Housekeeping: the review keeps the last ~12 files and deletes older
+  Housekeeping: the runner keeps the last 12 files and deletes older
   ones. What the log does NOT contain: anything about who read or
   searched what — the kit does not track usage, deliberately.
 - **It's a convenience, not the system.** The manual "brain review" is
@@ -190,7 +202,9 @@ Terminal users get the hardened version: ask Claude — *"set up an
 automatic weekly brain review"* — and it runs
 `python3 .tools/autoreview.py install` (Windows: `py -3`). That schedules a
 check every 20 minutes (launchd / Task Scheduler / systemd), and the review
-itself runs once a week. What the runner adds over a plain scheduled job,
+itself runs once a week. A run that fails gets one retry right away and
+then waits for the next day; only a run the computer's sleep cut off may
+try again the same day. What the runner adds over a plain scheduled job,
 each one the answer to a run that really failed:
 - **It only starts when you are at the computer.** A fixed "Friday 16:00"
   hits a closed laptop, the scheduler catches up during a 45-second
@@ -198,13 +212,17 @@ each one the answer to a run that really failed:
   machine is in use, keeps it awake while it runs, and a run your laptop
   slept through is simply caught up later — not reported as an error.
 - **Commits before and after.** Your week's captures get their own commit
-  first, partial work is committed even when the run aborts.
+  first; the model runs no git, the runner commits the review's work as
+  one commit (`Review YYYY-MM-DD (unattended)`), and partial work is
+  committed even when the run aborts.
 - **`python3 .tools/autoreview.py undo`** takes back exactly what the last
   unattended review committed (as `git revert`, so history stays), never
   the captures that were there before.
-- **Failures are a file, not a pop-up.** `!Review failed.md` in the inbox
-  says what happened and what to do; `!Review overdue.md` appears when no
-  run has succeeded for 10 days. Both disappear after the next success.
+- **Failures are a file, not just a pop-up.** `!Review failed.md` in the
+  inbox says what happened and what to do; `!Review overdue.md` appears
+  on the 11th day without a successful run (`patience_days`, default 10).
+  Both disappear after the next success. On macOS and Linux a desktop
+  notification points at them as well.
 - **Notes that would abort it are set aside, never lost.** A note dense
   with, say, offensive-security tool names can make the model's
   safeguards stop the whole headless run. Such captures move to
@@ -223,6 +241,8 @@ each one the answer to a run that really failed:
   reads it, the runner also fingerprints all of those files before the run
   and keeps a copy: if any changed, the whole run is rolled back, every one
   of them written back byte for byte (also the ones git does not track),
+  files the run created are moved to `.git/brainwarden-rolled-back/<date>/`
+  (out of the notes and the history, not deleted),
   and `!Review failed.md` tells you to look for a note with text aimed at
   the AI. Plugin settings
   (`data.json`, which some plugins run commands from) are simply put back
@@ -244,9 +264,13 @@ each one the answer to a run that really failed:
 
 ## Company brains
 
-**How do several people share one vault?** Through a private Git remote:
-one person sets the vault up, pushes it, everyone else clones it and
-pulls. Not through a synced cloud folder — Git plus Dropbox/OneDrive on
+**How do several people share one vault?** One person — the maintainer
+— keeps it in Git and is the only one who writes. Everyone else gets a
+copy and reads it in Claude Cowork (`COWORK.md`), Obsidian or any text
+editor, and sends contributions back as files in
+`00-inbox/suggestions/`. Where several people are at home in Git, a
+private remote everyone clones and pulls works too — still with one
+writer. Not through a synced cloud folder — Git plus Dropbox/OneDrive on
 the same folder is the classic way to corrupt a vault. Everything stays
 plain Markdown, so anyone can read it with or without Claude.
 
@@ -447,8 +471,11 @@ in the inbox into an ordinary capture, moves the recording to
 `90-archive/voice/` and embeds it in the note, so the review can listen
 when a sentence looks odd. It uses the first local speech engine it finds
 (mlx-whisper on Apple Silicon, whisper.cpp, faster-whisper, openai-whisper —
-`--check` says which); nothing is uploaded. Run it once by hand (the first
-run downloads the speech model), then `transcribe.py --auto on` lets the
+`--check` says which); nothing is uploaded. It also needs ffmpeg
+(ffmpeg.org; macOS: `brew install ffmpeg`): every recording is converted
+to WAV by it first, and `--check` says when it is missing. Run it once
+by hand (the first run downloads the speech model), then
+`transcribe.py --auto on` lets the
 weekly runner's 20-minute tick do it, so a memo is text in the inbox
 within 20 minutes of reaching the computer. Speech models invent sentences
 on silence; names and numbers are worth a listen.

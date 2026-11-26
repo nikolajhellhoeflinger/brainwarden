@@ -203,13 +203,18 @@ above a supersede notice. Real relative paths, rest of the file untouched.
   else, no new subfolder without a reason.
 - Before creating a note, search first — extend instead of duplicating.
 - Review hygiene: `python3 .tools/hygiene.py` reports orphan notes, dead
-  links, empty files and notes missing from their folder's `index.md`.
+  links, near-empty notes, notes no signpost reaches, folders without an
+  `index.md`, frontmatter gaps, expired `stale_after`/`review_due` dates,
+  one-sided supersede chains, unclosed code fences and portability
+  problems (encodings, file names another system cannot hold).
 - Retired procedure / former partner → move to `90-archive/`, and remove
   it from the source folder's `index.md` entry points.
 
 ## Sync
-- Versioning: local Git. Sharing between people: a private Git remote
-  everyone clones and pulls — not a cloud sync folder (corruption risk
+- Versioning: local Git. Sharing between people: one maintainer writes;
+  everyone else reads a copy (Cowork, Obsidian, any editor) or a
+  read-only clone of a private Git remote, and contributes through
+  `00-inbox/suggestions/` — not a cloud sync folder (corruption risk
   with Git, and no review step before content becomes truth).
 
 ## Commands

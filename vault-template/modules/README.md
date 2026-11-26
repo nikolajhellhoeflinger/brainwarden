@@ -31,7 +31,8 @@ that script; when an overlay gains a file that a shared vault must not
 have, that list is the one place to change.
 
 
-Order matters, and the script applies it: the company overlay deliberately OVERWRITES thirteen core files. Nine of
+Order matters, and the script applies it: the company overlay deliberately OVERWRITES thirteen files — twelve
+from the core plus the processes overlay's `_templates/sop-note.md`. Nine of
 them talk about folders which do not exist in a company vault — six
 `index.md` (root, `00-inbox/`, `30-knowledge/`, `40-decisions/`,
 `90-archive/`, `_templates/`) plus `Home.md` (the core one links
@@ -51,11 +52,11 @@ nothing in the kit would ever have pointed at the cause.
 
 That is all intended: every link in a signpost has to be a path that
 really exists and every template has to produce a note this mode
-accepts, otherwise the whole system lies. Use plain
-`cp -R` for the overlay even on the adopt path (these are kit
-infrastructure, not the human's content); the only content file in the
-overlay is `About this vault.md`, so on an adopt run copy that one with
-`cp -n` afterwards if it already exists.
+accepts, otherwise the whole system lies. Apply the overlays with
+`assemble.py` on the adopt path too: it replaces a core file only where
+it copied that file a moment earlier, never one that was already there —
+their own `About this vault.md`, `Home.md` or filled-in `index.md`
+included.
 
 The company `Home.md` keeps the SAME four block markers as the core one
 (`block:right-now`, `block:next-deadlines`, `block:open-questions`,
@@ -77,7 +78,7 @@ where they merely override an `index.md`, the identical two-line
 | Overlay | Adds |
 |---|---|
 | `processes/` | `50-processes/` and `60-contribution/` (each index + CLAUDE.md), `handover.md`, `_templates/sop-note.md` + `meeting-note.md` + `contribution-entry.md` + `learning-note.md`, and two overriding files: `_templates/index.md` (lists the SOP template) and the root `index.md` (without it the folder that defines this mode is missing from the cold-entry signpost) |
-| `company/` | `60-roles/`, `70-onboarding/` (incl. `onboarding-path.md`), `80-partners/`, `00-inbox/suggestions/`, `About this vault.md`, `THIS-COPY.md` (a distributed copy ages silently — this file carries its date), `.tools/progress.py` (how much of the vault is verified, not just how much text exists), `_templates/role-note.md` + `partner-note.md` + `onboarding-plan.md`, and thirteen overriding files: six `index.md` (root, `00-inbox`, `30-knowledge`, `40-decisions`, `90-archive`, `_templates`), `Home.md`, `Deadlines.md` (the core one lacks this mode's required fields), **`CLAUDE.md`** — the binding rules file; the core one describes projects, areas and person notes, none of which exist here, and leaving it in place is the one override whose absence makes an agent create a personnel dossier — and four note templates (`_templates/knowledge-note.md`, `source-note.md`, `sop-note.md`, `40-decisions/_template.md`) whose core versions produce notes that fail this mode's own frontmatter check. |
+| `company/` | `60-roles/`, `70-onboarding/` (incl. `onboarding-path.md`), `80-partners/`, `00-inbox/suggestions/`, `About this vault.md`, `THIS-COPY.md` (a distributed copy ages silently — this file carries its date), `.tools/progress.py` (how much of the vault is verified, not just how much text exists), `_templates/role-note.md` + `partner-note.md` + `onboarding-plan.md`, and thirteen overriding files (twelve from the core, `sop-note.md` from `processes/`): six `index.md` (root, `00-inbox`, `30-knowledge`, `40-decisions`, `90-archive`, `_templates`), `Home.md`, `Deadlines.md` (the core one lacks this mode's required fields), **`CLAUDE.md`** — the binding rules file; the core one describes projects, areas and person notes, none of which exist here, and leaving it in place is the one override whose absence makes an agent create a personnel dossier — and four note templates (`_templates/knowledge-note.md`, `source-note.md`, `sop-note.md`, `40-decisions/_template.md`) whose core versions produce notes that fail this mode's own frontmatter check. |
 
 ## Placeholders the setup still has to fill
 - `{{MODE}}` and `{{LANGUAGE}}` in the vault `CLAUDE.md`

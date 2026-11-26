@@ -80,12 +80,12 @@ tags: [kebab-case, lowercase, few]
 Optional — add a field the moment it applies, never "just because":
 ```yaml
 maturity: seed | growing | evergreen   # knowledge notes: how worked out is it?
-status: draft | stable | deprecated    # does it still hold? (required from professional up)
+status: draft | stable | deprecated    # does it still hold? (work brains: recommended)
 source: <URL/book/person>              # one external source
 sources: [{resource: <uri>, title: <str>}]      # several sources
 stale_after: YYYY-MM-DD                 # from this date on, distrust it
 ownership: private | company | mixed    # who it belongs to (work brains: required)
-confidentiality: public | internal | strict
+confidentiality: public | internal | strict  # work brains: recommended
 ai_release: local | external_ok         # may this leave the machine?
 last_verified: YYYY-MM-DD               # runbooks: when you last actually ran it
 handover_relevant: true                 # would a stand-in need this? (work brains)
@@ -127,7 +127,8 @@ old spelling in a note, rename it.
 
 **`ownership:` — the field a work brain cannot do without.** In
 `professional` mode every note carries `ownership: private | company |
-mixed` plus `confidentiality:`. This is not bureaucracy, it is the only
+mixed` — the one field `hygiene.py` requires there (`status:` and
+`confidentiality:` are recommended). This is not bureaucracy, it is the only
 thing that makes the vault separable later. In Germany and Austria an
 employee must hand over everything obtained from the employment when they
 leave — and courts have held that this includes **notes the employee wrote
@@ -267,7 +268,10 @@ garden; it never replaces the plants.
 - Before creating a people/knowledge note, search first — extend instead
   of duplicating.
 - Review hygiene: `python3 .tools/hygiene.py` reports orphan notes, dead
-  links, empty files and notes missing from their folder's `index.md`.
+  links, near-empty notes, notes no signpost reaches, folders without an
+  `index.md`, frontmatter gaps, expired `stale_after`/`review_due` dates,
+  one-sided supersede chains, unclosed code fences and portability
+  problems (encodings, file names another system cannot hold).
   If another program writes into this vault (an assistant's memory store, a
   plugin's daily notes, an export), list those folders in `.hygieneignore`
   in the vault root, one per line — they follow their own conventions and
@@ -286,9 +290,11 @@ garden; it never replaces the plants.
   vouched for — never message text; the export stays outside the vault). It
   stores nothing about anyone; the person-note rule stands.
 - Voice memos: `python3 .tools/transcribe.py` turns audio files in the inbox into
-  captures, locally (`--check` names the speech engine; `--auto on` lets the
-  runner's tick do it). The recording moves to `90-archive/voice/` and stays
-  embedded in the note — listen before trusting an odd name or number.
+  captures, locally. It needs ffmpeg (every recording is converted to WAV
+  first; `--check` names the speech engine and says if ffmpeg is missing;
+  `--auto on` lets the runner's tick do it). The recording moves to
+  `90-archive/voice/` and stays embedded in the note — listen before
+  trusting an odd name or number.
 - Unattended weekly review (only if the person asked for it):
   `python3 .tools/autoreview.py install`, then `status` · `run --now` ·
   `undo` · `uninstall`. Its notices in the inbox (`!Review failed.md`,
