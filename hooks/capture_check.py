@@ -134,14 +134,18 @@ def vault_path():
     return os.path.expanduser("~/Brain")
 
 
-VAULT_MARK = re.compile(r"^\s*(?:\*\*)?(?:Vault mode|Kit version|Mode)\s*:", re.M | re.I)
+# a kit vault states its mode as a VALUE (the label may be translated)
+MODE_LINE = re.compile(r"^\*\*[^\n:]{0,40}:\s*(personal|professional|company)\b", re.M | re.I)
 
 
 def session_vault(cwd):
     """The vault this session works IN, if it is one: the folder (or one
-    above it) whose CLAUDE.md carries a mode line and that has an inbox.
-    That is the first rule every brain-* skill follows; without it, a
-    session in a company vault was asked to capture into the private one."""
+    above it) with a kit mode line in its CLAUDE.md, the kit's tools and an
+    inbox. That is the first rule every brain-* skill follows; without it, a
+    session in a company vault was asked to capture into the private one.
+    All three, not just "a CLAUDE.md that says Mode:": a code repository
+    whose rules file happens to say so must never become the place where
+    private captures are written."""
     here = os.path.abspath(cwd) if cwd else ""
     for _ in range(12):
         if not here:
@@ -151,7 +155,8 @@ def session_vault(cwd):
                 text = fh.read(65536)
         except OSError:
             text = ""
-        if VAULT_MARK.search(text) and watched_folders(here)[0]:
+        if MODE_LINE.search(text) and os.path.isfile(os.path.join(here, ".tools", "hygiene.py")) \
+                and watched_folders(here)[0]:
             return here
         up = os.path.dirname(here)
         if up == here:

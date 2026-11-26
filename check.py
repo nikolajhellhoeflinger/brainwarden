@@ -381,6 +381,8 @@ def check_hooks(tmp):
     other = os.path.join(tmp, "teamvault")
     os.makedirs(os.path.join(other, "00-inbox"))
     os.makedirs(os.path.join(other, "50-processes"))
+    os.makedirs(os.path.join(other, ".tools"))
+    open(os.path.join(other, ".tools", "hygiene.py"), "w").close()
     with open(os.path.join(other, "CLAUDE.md"), "w", encoding="utf-8") as fh:
         fh.write("# Brain — shared company knowledge vault\n\n**Vault mode: company**\n")
     cfg3 = os.path.join(tmp, "cfg-team")
@@ -392,6 +394,21 @@ def check_hooks(tmp):
                        text=True, encoding="utf-8", errors="replace", env=dict(env, CLAUDE_CONFIG_DIR=cfg3))
     if os.path.join(other, "00-inbox") not in reason(r.stdout) or inbox in reason(r.stdout):
         return bad("hooks run", "a session inside another vault was asked to capture into the configured one")
+    # ... but a code repository whose CLAUDE.md merely says "Mode:" next to a
+    # 00- folder is no vault: private captures must not be written into it
+    repo = os.path.join(tmp, "some-repo")
+    os.makedirs(os.path.join(repo, "00-setup"))
+    with open(os.path.join(repo, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write("# Some repo\n\n**Mode:** strict TypeScript\n")
+    cfg4 = os.path.join(tmp, "cfg-repo")
+    os.makedirs(cfg4)
+    with open(os.path.join(cfg4, "CLAUDE.md"), "w", encoding="utf-8") as fh:
+        fh.write(f"- Brain vault: {vault}\n")
+    r = subprocess.run([sys.executable, hook % "capture_check"], input=json.dumps({"cwd": repo}),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=dict(env, CLAUDE_CONFIG_DIR=cfg4))
+    if inbox not in reason(r.stdout) or "00-setup" in reason(r.stdout):
+        return bad("hooks run", "a code repository with a 'Mode:' line was taken for a vault")
 
     r = call("session_queue", {"reason": "clear", "cwd": vault, "session_id": "s1"})
     if r.returncode or "Traceback" in r.stderr:
