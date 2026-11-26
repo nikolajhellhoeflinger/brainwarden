@@ -602,6 +602,13 @@ if mode == "fail-then-inject":        # the first try fails plainly, the retry p
     with open(pathlib.Path(".tools", "hygiene.py"), "a", encoding="utf-8") as fh:
         fh.write("\n# planted on the retry\n")
     sys.exit(0)
+if mode == "filter-config":           # a clean filter: any `git diff` with this config runs it
+    with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
+        fh.write('[filter "x"]\n\tclean = sh -c \'touch $FAKE_FILTER_MARK && cat\'\n')   # no ";" — it starts a comment
+    pathlib.Path(".gitattributes").write_text("*.md filter=x\n", encoding="utf-8")
+    t = pathlib.Path("30-knowledge", "tools.md")      # same size, new content: git must read it, through the filter
+    t.write_text(t.read_text(encoding="utf-8").swapcase(), encoding="utf-8")
+    sys.exit(0)
 if mode == "inject-config":           # the quietest version: only git's config
     with open(pathlib.Path(".git", "config"), "a", encoding="utf-8") as fh:
         fh.write("[core]\n\thooksPath = /tmp/planted-hooks\n")
@@ -1436,20 +1443,30 @@ def check_autoreview(tmp):
         return bad(label, f"a run that planted code was not rolled back (exit {r.returncode})")
     # a NEW note is not undone by git reset: the next run would commit it as the week's work
     kept = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(vault, ".git", "brainwarden-rolled-back"))
-            for f in fs if f == "filed-by-the-run.md"]
+            for f in fs if f == "filed-by-the-run.md.kept"]
     if exists("30-knowledge/filed-by-the-run.md") or not kept:
         return bad(label, "a new note of a rolled-back run stayed in the vault (or was not kept aside)")
     rolled = os.path.join(vault, ".git", "brainwarden-rolled-back")
     kept_files = {os.path.relpath(os.path.join(dp, f), rolled).split(os.sep, 1)[-1].replace(os.sep, "/")
                   for dp, _, fs in os.walk(rolled) for f in fs}
-    if "30-knowledge/tools.md" not in kept_files or ".mcp.json" not in kept_files:
+    if "30-knowledge/tools.md.kept" not in kept_files or ".mcp.json.kept" not in kept_files:
         return bad(label, f"a rollback threw away what it reset or swept instead of keeping it aside: {sorted(kept_files)[:8]}")
+    # ... and keeps it inert: no hook, config or HEAD under a name git, an editor or Claude would act on
+    live = sorted(f for f in kept_files if not f.endswith(".kept"))
+    if live:
+        return bad(label, f"kept files of a rolled-back run keep a runnable name: {live[:5]}")
     if "rolled back" not in read("00-inbox/!Review failed.md") or "rolled back" not in log():
         return bad(label, "a rolled-back run left no notice")
 
     r = ar("run", "--now", mode="inject-config")
     if r.returncode != 3 or "planted-hooks" in read(".git/config"):
         return bad(label, f"a run that only redirected git hooks was not caught (exit {r.returncode})")
+    filter_mark = os.path.join(tmp, "filter-ran")
+    r = ar("run", "--now", mode="filter-config", FAKE_FILTER_MARK=filter_mark)
+    if r.returncode != 3 or os.path.exists(filter_mark) or 'filter "x"' in read(".git/config"):
+        return bad(label, f"the rollback ran git while a planted filter was still configured (exit {r.returncode})")
+    if exists(".gitattributes"):
+        os.remove(os.path.join(vault, ".gitattributes"))
 
     open(count, "w").close()                 # odd call fails, even call plants: start from zero
     r = ar("run", "--now", mode="fail-then-inject")
@@ -1671,7 +1688,7 @@ def check_autoreview(tmp):
     sh("git", "commit", "-qm", "a note of mine")
     r = ar("run", "--now", mode="person-edits")
     kept_texts = [open(os.path.join(dp, f), encoding="utf-8", errors="replace").read()
-                  for dp, _, fs in os.walk(rolled) for f in fs if f == "mine.md"]
+                  for dp, _, fs in os.walk(rolled) for f in fs if f == "mine.md.kept"]
     notice = read("00-inbox/!Review failed.md") if exists("00-inbox/!Review failed.md") else ""
     if r.returncode != 3 or not any("PERSON-TYPED-THIS" in t for t in kept_texts) \
             or "brainwarden-rolled-back" not in notice or "nothing is lost" in notice:

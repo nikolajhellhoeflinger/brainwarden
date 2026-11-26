@@ -1057,9 +1057,17 @@ def rolled_back_dir():
     return VAULT / ".git" / "brainwarden-rolled-back" / today().isoformat()
 
 
+def kept_name(rel):
+    """Where a kept file goes: under rolled_back_dir(), with `.kept` appended.
+    Inert on purpose — a kept `.git/config`, `HEAD` or hook under its own
+    name would rebuild a repository (or an editor task, a CLAUDE.md) that
+    git, an editor or Claude might act on once someone opens that folder."""
+    return rolled_back_dir() / (rel + ".kept")
+
+
 def keep_aside(rel):
     """A copy of one regular file under rolled_back_dir(), through real folders only."""
-    src, target = VAULT / rel, rolled_back_dir() / rel
+    src, target = VAULT / rel, kept_name(rel)
     if not stat.S_ISREG(os.lstat(src).st_mode):
         return False
     real_dirs(target)
@@ -1106,18 +1114,17 @@ def set_aside_new(untracked_before):
     if untracked_before is None or now is None:
         say("could not tell which files the run created — new files, if any, were left in place")
         return []
-    dest = rolled_back_dir()
     moved = []
     for rel in sorted(now - untracked_before):
         src = VAULT / rel
         if not (src.is_file() or src.is_symlink()):
             continue
-        target = dest / rel
+        target = kept_name(rel)
         real_dirs(target)
         os.replace(src, target)          # a link moves as a link
         moved.append(rel)
     if moved:
-        say(f"new files of the rolled-back run set aside in {dest.relative_to(VAULT).as_posix()}/: "
+        say(f"new files of the rolled-back run set aside in {rolled_back_dir().relative_to(VAULT).as_posix()}/: "
             + ", ".join(moved[:10]))
     return moved
 
@@ -1131,9 +1138,11 @@ def roll_back(base, before, saved_hooks, saved_plugins, saved_files=None, start=
     log = log_path().read_bytes() if log_path().is_file() and not os.path.islink(log_path()) else b""
     del HELD[:]
     start = start or {}
-    steps = [("keep changed", lambda: keep_changed(base)),
+    # .git/config back FIRST: every git command below would otherwise run with
+    # whatever the run planted there (a filter or fsmonitor program)
+    steps = [("git config", lambda: "" in saved_hooks and safe_write(VAULT / ".git" / "config", saved_hooks[""])),
              ("sweep", lambda: sweep(before)),
-             ("git config", lambda: "" in saved_hooks and safe_write(VAULT / ".git" / "config", saved_hooks[""])),
+             ("keep changed", lambda: keep_changed(base)),
              ("reset", lambda: reset_to(base, start)),
              ("sweep again", lambda: sweep(before)),
              ("hooks", lambda: _restore_hooks(saved_hooks)),
@@ -1474,7 +1483,8 @@ def _tampered(stamp, base, before, saved_hooks, saved_plugins, changed, saved_fi
         "addressed to an AI (\"ignore previous instructions\", \"run …\"). Then catch up in a normal, "
         "supervised chat: *\"brain review\"*.",
         kept=f"Nothing of this run was committed. What it changed or created — and any note or setting "
-             f"you edited meanwhile — is kept, outside the notes, in `{aside}`.")
+             f"you edited meanwhile — is kept, outside the notes, in `{aside}`, each file with `.kept` "
+             "appended so that nothing in there can run; drop the ending to use one again.")
     git("add", "--", str(FAIL_NOTE.relative_to(VAULT)))
     git("commit", "-q", "-m", f"Weekly run {stamp} rolled back — protected files were changed",
         "--", str(FAIL_NOTE.relative_to(VAULT)))

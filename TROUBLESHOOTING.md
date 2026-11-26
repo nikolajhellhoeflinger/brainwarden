@@ -250,7 +250,10 @@ each one the answer to a run that really failed:
   of them written back byte for byte (also the ones git does not track),
   files the run created and the changed versions of existing notes are
   first kept in `.git/brainwarden-rolled-back/<date>/` (out of the notes
-  and the history, not deleted — nothing you typed meanwhile is lost),
+  and the history, not deleted — nothing you typed meanwhile is lost;
+  each copy ends in `.kept`, so nothing in there can run — drop the
+  ending to use one again; git's config is put back before any git
+  command runs),
   and `!Review failed.md` says where and tells you to look for a note
   with text aimed at the AI. Plugin settings
   (`data.json`, which some plugins run commands from) are simply put back
